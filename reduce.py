@@ -133,10 +133,10 @@ if __name__ == '__main__':
         os.mkdir('twilights/off')
     
     for f in [i[6:-3] for i in rflats]:
-            os.rename('tz'+f, "twilights/off/tz"+f)
+        os.rename('tz'+f, "twilights/off/tz"+f)
     
     for f in [i[6:-3] for i in onflats]:
-            os.rename('tz'+f, "twilights/on/tz"+f)
+        os.rename('tz'+f, "twilights/on/tz"+f)
     
     print('Moved processed flats to /twilights')
     
@@ -145,10 +145,10 @@ if __name__ == '__main__':
         os.mkdir('tzfiles')
     
     for f in [i[6:-3] for i in rims]:
-            os.rename('tz'+f, "tzfiles/tz"+f)
+        os.rename('tz'+f, "tzfiles/tz"+f)
     
     for f in [i[6:-3] for i in onims]:
-            os.rename('tz'+f, "tzfiles/tz"+f)
+        os.rename('tz'+f, "tzfiles/tz"+f)
     
     print('Moved processed sky+object images to /tzfiles')
     
@@ -159,10 +159,10 @@ if __name__ == '__main__':
         os.mkdir('Flats/off')
     
     for f in [i[8:-3] for i in rims]:
-            copyfile('tzfiles/tz'+f, "Flats/off/tz"+f)
+        copyfile('tzfiles/tz'+f, "Flats/off/tz"+f)
     
     for f in [i[8:-3] for i in onims]:
-            copyfile('tzfiles/tz'+f, "Flats/on/tz"+f)
+        copyfile('tzfiles/tz'+f, "Flats/on/tz"+f)
     
     print('Copied sky+object images to /Flats')
     print('Now proceed to making night sky flats in /Flats directory.')
