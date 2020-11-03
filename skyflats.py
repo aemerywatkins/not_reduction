@@ -1,9 +1,14 @@
+# Changes:
+# Added sky modelling with Legendre2D (fit_sky_L2D, desky)
+# Optimized NoiseChisel commands
+# Changed mk_bnf_im to also use a bad pixel map
+
 import os
 import glob
 import sys
 from astropy.io import fits
 from astropy.io import ascii as asc
-from astropy.modeling.models import custom_model
+from astropy.modeling.models import custom_model,Legendre2D
 from astropy.modeling.fitting import LevMarLSQFitter
 from pyraf import iraf
 import numpy as np
@@ -140,7 +145,7 @@ def mk_mask(f, mstr, commands=''):
     print('Wrote binary mask file to disk as '+fnm)
 
 
-def mk_bn_im(f, mf, block):
+def mk_bn_im(f, mf, fnm, block, bpmf='vmap.fits'):
     '''
     Creates a masked, binned image using previously generated masks.
     Requires:
@@ -150,11 +155,12 @@ def mk_bn_im(f, mf, block):
     '''
     hdulist = fits.open(f)
     msk = fits.getdata(mf)
+    bpm = fits.getdata(f[:f.find('/')]+'/'+bpmf)
     # Masking pixels in image
     hdulist[0].data[msk == 1] = -999
+    hdulist[0].data[bpm == 1] = -999
     # Binning image
     bn_data, bn_header = bin_image(hdulist, block)
-    fnm = mf[:mf.find(mstr+'tz')]+bnstr+mf[mf.find('tz'):]
     # Writing to hard disk
     write_im_head(bn_data, bn_header, fnm)
     
@@ -300,8 +306,74 @@ def fit_sky(bnlist, block, pfile):
               overwrite=True)
     print('Wrote plane fits params to '+dir_nm+pfile)
 
+    
+def fit_sky_L2D(bnlist, block, pfile, degree):
+    '''
+    Does Legendre2D fits to each binned, masked image and records the
+    parameter values to a table.
+    Requires:
+     - List of binned images (e.g. bn_onfiles)
+     - Block factor used to bin the images
+     - Name of planes table to be written to hard drive
+    
+    Writes plane fit parameters to a table called pvals.dat in the
+    appropriate directory.
+    '''
+    dir_nm = bnlist[0][:bnlist[0].find(bnstr)]
+    nrej, nsig = 3, 3
+    m_init = Legendre2D(degree,degree)
+    fit = LevMarLSQFitter()
+    
+    c0_0 = np.zeros(len(bnlist))
+    c1_0 = np.zeros(len(bnlist))
+    c2_0 = np.zeros(len(bnlist))
+    c0_1 = np.zeros(len(bnlist))
+    c1_1 = np.zeros(len(bnlist))
+    c2_1 = np.zeros(len(bnlist))
+    c0_2 = np.zeros(len(bnlist))
+    c1_2 = np.zeros(len(bnlist))
+    c2_2 = np.zeros(len(bnlist))
+    for i in range(len(bnlist)):            
+        bnim = fits.open(bnlist[i])
+        dim1 = np.arange(block//2+1,bnim[0].data.shape[1]*block,block)
+        dim2 = np.arange(block//2+1,bnim[0].data.shape[0]*block,block)
+        Xb, Yb = np.meshgrid(dim1, dim2)
+        _sky = np.nanmedian(bnim[0].data[bnim[0].data!=-999])
+        _dsky = np.nanstd(bnim[0].data[bnim[0].data!=-999])
+        #Accepting only pixels within 1 standard deviation of background
+        good = (bnim[0].data > _sky-_dsky) & (bnim[0].data < _sky+_dsky)
+        Xbf, Ybf, binnedf = Xb[good], Yb[good], bnim[0].data[good]
+        good = np.ones_like(binnedf, dtype=bool)
+        
+        # Rejecting outliers; 3 rounds 3 sigma rejection
+        for it in range(nrej):
+            m = fit(m_init, Xbf, Ybf, binnedf, weights=good)
+            scatter = np.nanstd(m(Xbf[good], Ybf[good]) - binnedf[good])
+            diff = m(Xbf, Ybf) - binnedf
+            good = good & (np.abs(diff) < (nsig*_dsky))
+            m_init = m
+        # Doing final fit    
+        m = fit(m_init, Xbf, Ybf, binnedf, weights=good)
 
-def deplane(flist, plist, pfile):
+        # Recording values for later use
+        c0_0[i] = m.c0_0.value
+        c1_0[i] = m.c1_0.value
+        c2_0[i] = m.c2_0.value
+        c0_1[i] = m.c0_1.value
+        c1_1[i] = m.c1_1.value
+        c2_1[i] = m.c2_1.value
+        c0_2[i] = m.c0_2.value
+        c1_2[i] = m.c1_2.value
+        c2_2[i] = m.c2_2.value
+
+    fnames = [i.strip(dir_nm+bnstr) for i in bnlist]
+    asc.write([fnames, c0_0, c1_0, c2_0, c0_1, c1_1, c2_1, c0_2, c1_2, c2_2],
+              dir_nm+pfile,
+              names=['fname', 'c0_0', 'c1_0', 'c2_0', 'c0_1', 'c1_1', 'c2_1', 'c0_2', 'c1_2', 'c2_2'],
+              overwrite=True)
+    print('Wrote plane fits params to '+dir_nm+pfile)   
+
+def deplane(flist, plist, pfile, diagnostic=False):
     '''
     Removes plane fits from unflattened images
     Requires:
@@ -332,13 +404,57 @@ def deplane(flist, plist, pfile):
         skyplane /= np.mean(skyplane) # Normalize the plane
         im[0].data /= skyplane
         write_im_head(im[0].data, im[0].header, plist[i])
-    
+        if diagnostic:
+            write_im_head(skyplane, im[0].header, plist[i]+'.sky')
+
+            
+def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
+    '''
+    Removes sky fits from unflattened images
+    Requires:
+     - List of image names (e.g., onfiles)
+     - List of output image names (e.g. ptz*.fits)
+     - Name of plane fits data table (output from fit_sky())
+
+    On first run, give it tz*.fits.  Every other run, give it ptz*.fits.
+    '''
+    if flist[0].find(pfstr+'tz') != -1:
+        dir_nm = flist[0][:flist[0].find(pfstr+'tz')]
+    elif (flist[0].find(pstr+'tz') != -1):
+        dir_nm = flist[0][:flist[0].find(pstr+'tz')]
+    elif (flist[0].find(pfstr+'tz') == -1) & (flist[0].find(fstr+'tz') != -1):
+        dir_nm = flist[0][:flist[0].find(fstr+'tz')]
+    else:
+        dir_nm = flist[0][:flist[0].find('tz')]
+    pvals = asc.read(dir_nm+pfile)
+    for i in range(len(flist)):
+        im = fits.open(flist[i])
+        dim1 = np.arange(1, im[0].data.shape[1]+1)
+        dim2 = np.arange(1, im[0].data.shape[0]+1)
+        X, Y = np.meshgrid(dim1, dim2)
+        m = Legendre2D(degree, degree,
+                         c0_0 = pvals['c0_0'][i],
+                         c1_0 = pvals['c1_0'][i],
+                         c2_0 = pvals['c2_0'][i],
+                         c0_1 = pvals['c0_1'][i],
+                         c1_1 = pvals['c1_1'][i],
+                         c2_1 = pvals['c2_1'][i],
+                         c0_2 = pvals['c0_2'][i],
+                         c1_2 = pvals['c1_2'][i],
+                         c2_2 = pvals['c2_2'][i])
+        skyplane = m(X,Y)
+        skyplane /= np.mean(skyplane) # Normalize the sky
+        im[0].data /= skyplane
+        write_im_head(im[0].data, im[0].header, plist[i])
+        if diagnostic:
+            write_im_head(skyplane, im[0].header, plist[i]+'.'+str(indx)+'.sky')
+            
     
 if __name__ == '__main__':
     # Assumes directory has sub-directories /on and /off
     # Precursor stuff for later convenience
     Nloops = 5
-    block = 64
+    block = 16 #64
     pfile = 'pvals.dat'
     fstr = 'f'
     mstr = 'M'
@@ -357,6 +473,8 @@ if __name__ == '__main__':
     p_offfiles = [f[:f.find('tz')]+pstr+f[f.find('tz'):] for f in offfiles]
     pf_onfiles = [f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in onfiles]
     pf_offfiles = [f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in offfiles]
+    bnpf_onfiles = [f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in onfiles]
+    bnpf_offfiles = [f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in offfiles]
     
     # Linking to master twilight flats for first round
     if os.path.exists('rFlat.fits'):
@@ -399,45 +517,57 @@ if __name__ == '__main__':
             os.system('/bin/rm off/'+bnstr+'*.fits')
         print('Binning masked images....')
         for i in range(len(onfiles)):
-            mk_bn_im(f_onfiles[i], m_onfiles[i], block)
+            mf = m_onfiles[i]
+            fnm = mf[:mf.find(mstr+'tz')]+bnstr+mf[mf.find('tz'):]
+            mk_bn_im(f_onfiles[i], mf, fnm, block, bpmf='vmap_on.fits')
         for i in range(len(offfiles)):
-            mk_bn_im(f_offfiles[i], m_offfiles[i], block)
+            mf = m_offfiles[i]
+            fnm = mf[:mf.find(mstr+'tz')]+bnstr+mf[mf.find('tz'):]
+            mk_bn_im(f_offfiles[i], mf, fnm, block, bpmf='vmap_off.fits')
     
-        # Fitting plane to binned, masked images
-        # Is a plane appropriate?  Not sure.
-        print('Fitting planes to images....')
-        fit_sky(bn_onfiles, block, pfile)
-        fit_sky(bn_offfiles, block, pfile)
+        # Fitting sky to binned, masked images
+        print('Fitting skies to images....')
+        fit_sky_L2D(bn_onfiles, block, pfile, 2)
+        fit_sky_L2D(bn_offfiles, block, pfile, 2)
 
-        # First remove planes from flattened images to redo masks
-        print('Removing planes from flattened images....')
-        deplane(f_onfiles, pf_onfiles, pfile)
-        deplane(f_offfiles, pf_offfiles, pfile)
+        # First remove skies from flattened images to redo masks
+        print('Removing skies from flattened images....')
+        desky(f_onfiles, pf_onfiles, pfile, 2, indx=n, diagnostic=False)
+        desky(f_offfiles, pf_offfiles, pfile, 2, indx=n, diagnostic=False)
 
-        # Re-masking flattened, de-planed images....
+        # Re-masking flattened, de-skied images....
         print('Killing old masks....')
         os.system('/bin/rm on/'+mstr+'*.fits')
         os.system('/bin/rm off/'+mstr+'*.fits')
         print('Masking images....')
         for f in pf_onfiles:
-            mk_mask(f, mstr)
+            mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
         for f in pf_offfiles:
-            mk_mask(f, mstr)
+            mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
 
-        # Then remove planes from unprocessed images to make new flat
-        print('Removing planes from unprocessed images....')
-        deplane(onfiles, p_onfiles, pfile)
-        deplane(offfiles, p_offfiles, pfile)
+        # Then remove skies from unprocessed images to make new flat
+        print('Removing skies from unprocessed images....')
+        desky(onfiles, p_onfiles, pfile, 2)
+        desky(offfiles, p_offfiles, pfile, 2)
 
-        # Making new flat from deplaned raw images w/new masks
+        # Making new flat from deskied raw images w/new masks
+        os.system('rm on/Flat'+str(n)+'.fits')
+        os.system('rm off/Flat'+str(n)+'.fits')
         print('Making new flat....')
         mk_flat(p_onfiles, m_onfiles, n)
         mk_flat(p_offfiles, m_offfiles, n)
 
         # Now saving the outputs with appropriate filenames
-        print('Re-naming planes files....')
+        print('Re-naming sky files....')
         new_pfile = pfile[:pfile.find('.dat')]+str(n)+'.dat'
         os.rename('on/'+pfile, 'on/'+new_pfile)
         os.rename('off/'+pfile, 'off/'+new_pfile)
 
         # Add here a move to the Trial$n directory
+
+    # Diagnostic binned and masked images
+    print('Making diagnostic binned and masked images....')
+    for i in range(len(onfiles)):
+        mk_bn_im(pf_onfiles[i], m_onfiles[i], bnpf_onfiles[i], 9, bpmf='vmap_on.fits')
+    for i in range(len(offfiles)):
+        mk_bn_im(pf_offfiles[i], m_offfiles[i], bnpf_offfiles[i], 9, bpmf='vmap_off.fits')   
