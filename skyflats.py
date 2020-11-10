@@ -455,7 +455,7 @@ def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
 if __name__ == '__main__':
     # Assumes directory has sub-directories /on and /off
     # Precursor stuff for later convenience
-    Nloops = 10
+    Nloops = 5
     block = 16 #64
     pfile = 'pvals.dat'
     fstr = 'f'
