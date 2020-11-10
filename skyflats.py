@@ -109,6 +109,8 @@ def flatten(flist, flat):
      - Name of the flat to be used to flatten the images (string)
     '''
     for f in flist:
+        if os.path.exists(f[:f.find('tz')]+fstr+f[f.find('tz'):]):
+            os.remove(f[:f.find('tz')]+fstr+f[f.find('tz'):])
         iraf.imarith(operand1=f,
                      op='/',
                      operand2=flat,
@@ -453,7 +455,7 @@ def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
 if __name__ == '__main__':
     # Assumes directory has sub-directories /on and /off
     # Precursor stuff for later convenience
-    Nloops = 5
+    Nloops = 10
     block = 16 #64
     pfile = 'pvals.dat'
     fstr = 'f'
