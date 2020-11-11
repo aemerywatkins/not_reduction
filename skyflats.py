@@ -109,6 +109,8 @@ def flatten(flist, flat):
      - Name of the flat to be used to flatten the images (string)
     '''
     for f in flist:
+        if os.path.exists(f[:f.find('tz')]+fstr+f[f.find('tz'):]):
+            os.remove(f[:f.find('tz')]+fstr+f[f.find('tz'):])
         iraf.imarith(operand1=f,
                      op='/',
                      operand2=flat,
