@@ -68,7 +68,9 @@ def bin_image(hdulist, block=9):
                             np.shape(imtrim)[1]//block,
                             block)
                            )
-        # Take median of all block x block boxes
+
+        # Take median of all block x block boxes and ignore -999 values
+        binim[binim == -999.] = np.nan
         binned = np.nanmedian(binim, axis=(1,3))
     
         binned[np.isnan(binned)] = -999.0
