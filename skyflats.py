@@ -4,14 +4,42 @@
 # Changed mk_bnf_im to also use a bad pixel map
 
 import os
+from shutil import copyfile
 import glob
 import sys
 from astropy.io import fits
 from astropy.io import ascii as asc
-from astropy.modeling.models import custom_model,Legendre2D
+from astropy.modeling.models import custom_model, Legendre2D
 from astropy.modeling.fitting import LevMarLSQFitter
 from pyraf import iraf
 import numpy as np
+
+
+# Precursor stuff for later convenience
+# Making these global so importing functions works in other codes
+Nloops = 5
+NTrials = 5
+block = 16
+pfile = 'pvals.dat'
+fstr = 'f'
+mstr = 'M'
+bnstr = 'bn'
+pstr = 'p'
+pfstr = 'pf'
+onfiles = np.array(glob.glob('on/tz*.fits'))
+offfiles = np.array(glob.glob('off/tz*.fits'))
+f_onfiles = np.array([f[:f.find('tz')]+fstr+f[f.find('tz'):] for f in onfiles])
+f_offfiles = np.array([f[:f.find('tz')]+fstr+f[f.find('tz'):] for f in offfiles])
+m_onfiles = np.array([f[:f.find('tz')]+mstr+f[f.find('tz'):] for f in onfiles])
+m_offfiles = np.array([f[:f.find('tz')]+mstr+f[f.find('tz'):] for f in offfiles])
+bn_onfiles = np.array([f[:f.find('tz')]+bnstr+f[f.find('tz'):] for f in onfiles])
+bn_offfiles = np.array([f[:f.find('tz')]+bnstr+f[f.find('tz'):] for f in offfiles])
+p_onfiles = np.array([f[:f.find('tz')]+pstr+f[f.find('tz'):] for f in onfiles])
+p_offfiles = np.array([f[:f.find('tz')]+pstr+f[f.find('tz'):] for f in offfiles])
+pf_onfiles = np.array([f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in onfiles])
+pf_offfiles = np.array([f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in offfiles])
+bnpf_onfiles = np.array([f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in onfiles])
+bnpf_offfiles = np.array([f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in offfiles])
 
 
 @custom_model
@@ -198,7 +226,7 @@ def mk_init_masks():
         os.system('/bin/rm off/ftz*.fits')
 
 
-def mk_flat(flist, mlist, indx, pflag=1):
+def mk_flat(flist, mlist, indx, vmap, pflag=1):
     '''
     Creates a flat using imcombine.  Rejects masked pixels by creating
     .pl versions of the masks and adding these to the header of the
@@ -207,6 +235,7 @@ def mk_flat(flist, mlist, indx, pflag=1):
      - List of images that go into making the flat (tz*.fits)
      - List of masks associated with the above images (M*.fits)
      - Index of current loop in final flat-making process (int)
+     - Name of the vignetting mask (e.g., vmap_on.fits)
      - Flag indicated whether to use the raw images (tz*) or
      plane-corrected images (ptz*)
 
@@ -229,7 +258,7 @@ def mk_flat(flist, mlist, indx, pflag=1):
                    add='yes',
                    verify='no')
     if pflag:
-        instr =dir_nm+pstr+'tz*.fits'
+        instr =dir_nm+pstr+'tz*.fits' # This only works if previous loop's gunk is deleted
         outstr = dir_nm+'Flat'+str(indx)+'.fits' # Need to move these
         # after all iterations
     else:
@@ -248,11 +277,15 @@ def mk_flat(flist, mlist, indx, pflag=1):
                    mclip='yes',
                    lsigma=3.0,
                    hsigma=3.0)
-    iraf.noao
-    iraf.noao.imred()
-    iraf.noao.imred.generic()
-    iraf.noao.imred.generic.normalize(images=outstr,
-                              sample_section='[*,*]')
+    # Normalizing the output flat
+    flat = fits.open(outstr)
+    vmap = fits.getdata(dir_nm + vmap)
+    flat_data = flat[0].data.copy()
+    flat_data[vmap==1] = np.nan
+    mn = np.nanmean(flat_data[np.isfinite(flat_data)])
+    flat[0].data /= mn
+    
+    write_im_head(flat[0].data, flat[0].header, outstr)
     print('Flat normalized.')
 
 
@@ -325,7 +358,7 @@ def fit_sky_L2D(bnlist, block, pfile, degree):
     '''
     dir_nm = bnlist[0][:bnlist[0].find(bnstr)]
     nrej, nsig = 3, 3
-    m_init = Legendre2D(degree,degree)
+    m_init = Legendre2D(degree, degree)
     fit = LevMarLSQFitter()
     
     c0_0 = np.zeros(len(bnlist))
@@ -344,20 +377,18 @@ def fit_sky_L2D(bnlist, block, pfile, degree):
         Xb, Yb = np.meshgrid(dim1, dim2)
         _sky = np.nanmedian(bnim[0].data[bnim[0].data!=-999])
         _dsky = np.nanstd(bnim[0].data[bnim[0].data!=-999])
-        #Accepting only pixels within 1 standard deviation of background
-        good = (bnim[0].data > _sky-_dsky) & (bnim[0].data < _sky+_dsky)
-        Xbf, Ybf, binnedf = Xb[good], Yb[good], bnim[0].data[good]
-        good = np.ones_like(binnedf, dtype=bool)
+        #Accepting only pixels within 3 standard deviations of background
+        good = (bnim[0].data > _sky-3*_dsky) & (bnim[0].data < _sky+3*_dsky)
         
         # Rejecting outliers; 3 rounds 3 sigma rejection
         for it in range(nrej):
-            m = fit(m_init, Xbf, Ybf, binnedf, weights=good)
-            scatter = np.nanstd(m(Xbf[good], Ybf[good]) - binnedf[good])
-            diff = m(Xbf, Ybf) - binnedf
+            m = fit(m_init, Xb, Yb, bnim[0].data, weights=good)
+            scatter = np.nanstd(m(Xb[good], Yb[good]) - bnim[0].data[good])
+            diff = bnim[0].data - m(Xb, Yb)
             good = good & (np.abs(diff) < (nsig*_dsky))
             m_init = m
         # Doing final fit    
-        m = fit(m_init, Xbf, Ybf, binnedf, weights=good)
+        m = fit(m_init, Xb, Yb, bnim[0].data, weights=good)
 
         # Recording values for later use
         c0_0[i] = m.c0_0.value
@@ -375,10 +406,13 @@ def fit_sky_L2D(bnlist, block, pfile, degree):
               dir_nm+pfile,
               names=['fname', 'c0_0', 'c1_0', 'c2_0', 'c0_1', 'c1_1', 'c2_1', 'c0_2', 'c1_2', 'c2_2'],
               overwrite=True)
-    print('Wrote plane fits params to '+dir_nm+pfile)   
+    print('Wrote plane fits params to '+dir_nm+pfile)
+    
 
 def deplane(flist, plist, pfile, diagnostic=False):
     '''
+    DEPRECATED
+    -----------------------------------
     Removes plane fits from unflattened images
     Requires:
      - List of image names (e.g., onfiles)
@@ -455,30 +489,17 @@ def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
             
     
 if __name__ == '__main__':
-    # Assumes directory has sub-directories /on and /off
-    # Precursor stuff for later convenience
-    Nloops = 5
-    block = 16 #64
-    pfile = 'pvals.dat'
-    fstr = 'f'
-    mstr = 'M'
-    bnstr = 'bn'
-    pstr = 'p'
-    pfstr = 'pf'
-    onfiles = glob.glob('on/tz*.fits')
-    offfiles = glob.glob('off/tz*.fits')
-    f_onfiles = [f[:f.find('tz')]+fstr+f[f.find('tz'):] for f in onfiles]
-    f_offfiles = [f[:f.find('tz')]+fstr+f[f.find('tz'):] for f in offfiles]
-    m_onfiles = [f[:f.find('tz')]+mstr+f[f.find('tz'):] for f in onfiles]
-    m_offfiles = [f[:f.find('tz')]+mstr+f[f.find('tz'):] for f in offfiles]
-    bn_onfiles = [f[:f.find('tz')]+bnstr+f[f.find('tz'):] for f in onfiles]
-    bn_offfiles = [f[:f.find('tz')]+bnstr+f[f.find('tz'):] for f in offfiles]
-    p_onfiles = [f[:f.find('tz')]+pstr+f[f.find('tz'):] for f in onfiles]
-    p_offfiles = [f[:f.find('tz')]+pstr+f[f.find('tz'):] for f in offfiles]
-    pf_onfiles = [f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in onfiles]
-    pf_offfiles = [f[:f.find('tz')]+pfstr+f[f.find('tz'):] for f in offfiles]
-    bnpf_onfiles = [f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in onfiles]
-    bnpf_offfiles = [f[:f.find('tz')]+bnstr+pfstr+f[f.find('tz'):] for f in offfiles]
+    # Run this from the Flats main directory, not not_reduction folder
+    # Couple preliminary checks to avoid crashes
+    if not os.path.exists('on') or  not os.path.exists('off'):
+        print('Requires directories ./on and ./off, with tz*.fits images.')
+        print('Directories not found.  Quitting program....')
+        sys.exit()
+    if not os.path.exists('on/vmap_on.fits') or not os.path.exists('off/vmap_off.fits'):
+        print('Vignetting maps vmap_on.fits and vmap_off.fits not found.')
+        print('Must be in ./on and ./off directories, respectively.')
+        print('Quitting program....')
+        sys.exit()
     
     # Linking to master twilight flats for first round
     if os.path.exists('rFlat.fits'):
@@ -494,84 +515,128 @@ if __name__ == '__main__':
     if os.path.exists('on/CrudeFlat.fits'):
         print('Initial on flat already made.  Skipping....')
     else:
-        mk_flat(onfiles, m_onfiles, indx=0, pflag=0)
+        mk_flat(onfiles, m_onfiles, indx=0, vmap='vmap_on.fits', pflag=0)
 
     if os.path.exists('off/CrudeFlat.fits'):
         print('Initial off flat already made.  Skipping....')
     else:
-        mk_flat(offfiles, m_offfiles, indx=0, pflag=0)    
+        mk_flat(offfiles, m_offfiles, indx=0, vmap='vmap_off.fits', pflag=0)
 
-    # Add here Trial$n creation, once half-splits are incorporated
-    for n in range(Nloops):
-        print('Doing loop ',n+1,' of ',Nloops)
+    # Clearing previous output automatically
+    for direc in ['on/', 'off/']:
+        os.system('/bin/rm -r '+direc+'Trial*')
+        os.system('/bin/rm '+direc+'Flat*.fits')
+        os.system('/bin/rm '+direc+'pvals*.dat')
         
-        # Flattening images
-        print('Flattening images....')
-        if n==0:
-            flat = 'CrudeFlat.fits'
+    # Add here Trial$n creation, once half-splits are incorporated
+    for m in range(NTrials):
+        print('Doing Trial ',m+1,' of ',NTrials)
+        if not os.path.exists('on/Trial'+str(m+1)):
+            os.mkdir('on/Trial'+str(m+1))
+        if not os.path.exists('off/Trial'+str(m+1)):
+            os.mkdir('off/Trial'+str(m+1))
+
+        # On first trial, use all images
+        if (m == NTrials-1):
+            inds = np.arange(len(onfiles))
+        # On remaining trials, use random half-splits of the images
         else:
-            flat = 'Flat'+str(n-1)+'.fits'
-        flatten(onfiles, 'on/'+flat)
-        flatten(offfiles, 'off/'+flat)
+            inds = np.random.choice(np.arange(len(onfiles)),
+                                    size=len(onfiles)//2,
+                                    replace=False)
+            inds = np.array(inds, dtype=int)
 
-        # Binning images w/masks
-        if os.path.exists(bn_onfiles[-1]):
-            print('Killing previous binned images....')
-            os.system('/bin/rm on/'+bnstr+'*.fits')
-            os.system('/bin/rm off/'+bnstr+'*.fits')
-        print('Binning masked images....')
-        for i in range(len(onfiles)):
-            mf = m_onfiles[i]
-            fnm = mf[:mf.find(mstr+'tz')]+bnstr+mf[mf.find('tz'):]
-            mk_bn_im(f_onfiles[i], mf, fnm, block, bpmf='vmap_on.fits')
-        for i in range(len(offfiles)):
-            mf = m_offfiles[i]
-            fnm = mf[:mf.find(mstr+'tz')]+bnstr+mf[mf.find('tz'):]
-            mk_bn_im(f_offfiles[i], mf, fnm, block, bpmf='vmap_off.fits')
+        # Removing previous run's output to start fresh
+        # Preserves existing masks and CrudeFlat.fits
+        for direc in ['on/', 'off/']:
+            os.system('/bin/rm '+direc+'p*.fits')
+            os.system('/bin/rm '+direc+'bn*.fits')
+            os.system('/bin/rm '+direc+'ftz*.fits')
+            os.system('/bin/rm '+direc+'*.pl')
+            
+        for n in range(Nloops):
+            print('Doing loop ',n+1,' of ',Nloops)
+            
+            # Flattening images
+            print('Flattening images....')
+            if n==0:
+                flat = 'CrudeFlat.fits'
+            else:
+                flat = 'Flat'+str(n-1)+'.fits'
+            flatten(onfiles[inds], 'on/'+flat)
+            flatten(offfiles[inds], 'off/'+flat)
     
-        # Fitting sky to binned, masked images
-        print('Fitting skies to images....')
-        fit_sky_L2D(bn_onfiles, block, pfile, 2)
-        fit_sky_L2D(bn_offfiles, block, pfile, 2)
-
-        # First remove skies from flattened images to redo masks
-        print('Removing skies from flattened images....')
-        desky(f_onfiles, pf_onfiles, pfile, 2, indx=n, diagnostic=False)
-        desky(f_offfiles, pf_offfiles, pfile, 2, indx=n, diagnostic=False)
-
-        # Re-masking flattened, de-skied images....
-        print('Killing old masks....')
-        os.system('/bin/rm on/'+mstr+'*.fits')
-        os.system('/bin/rm off/'+mstr+'*.fits')
-        print('Masking images....')
-        for f in pf_onfiles:
-            mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
-        for f in pf_offfiles:
-            mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
-
-        # Then remove skies from unprocessed images to make new flat
-        print('Removing skies from unprocessed images....')
-        desky(onfiles, p_onfiles, pfile, 2)
-        desky(offfiles, p_offfiles, pfile, 2)
-
-        # Making new flat from deskied raw images w/new masks
-        os.system('rm on/Flat'+str(n)+'.fits')
-        os.system('rm off/Flat'+str(n)+'.fits')
-        print('Making new flat....')
-        mk_flat(p_onfiles, m_onfiles, n)
-        mk_flat(p_offfiles, m_offfiles, n)
-
-        # Now saving the outputs with appropriate filenames
-        print('Re-naming sky files....')
-        new_pfile = pfile[:pfile.find('.dat')]+str(n)+'.dat'
-        os.rename('on/'+pfile, 'on/'+new_pfile)
-        os.rename('off/'+pfile, 'off/'+new_pfile)
-
-        # Add here a move to the Trial$n directory
-
-    # Diagnostic binned and masked images
-    print('Making diagnostic binned and masked images....')
-    for i in range(len(onfiles)):
-        mk_bn_im(pf_onfiles[i], m_onfiles[i], bnpf_onfiles[i], 9, bpmf='vmap_on.fits')
-    for i in range(len(offfiles)):
-        mk_bn_im(pf_offfiles[i], m_offfiles[i], bnpf_offfiles[i], 9, bpmf='vmap_off.fits')   
+            # Binning images w/masks
+            if os.path.exists(bn_onfiles[inds][-1]):
+                print('Killing previous binned images....')
+                os.system('/bin/rm on/'+bnstr+'*.fits')
+                os.system('/bin/rm off/'+bnstr+'*.fits')
+            print('Binning masked images....')
+            for i in range(len(onfiles[inds])):
+                mk_bn_im(f_onfiles[inds][i], m_onfiles[inds][i], bn_onfiles[inds][i], block, bpmf='vmap_on.fits')
+            for i in range(len(offfiles[inds])):
+                mk_bn_im(f_offfiles[inds][i], m_offfiles[inds][i], bn_offfiles[inds][i], block, bpmf='vmap_off.fits')
+        
+            # Fitting sky to binned, masked images
+            print('Fitting skies to images....')
+            fit_sky_L2D(bn_onfiles[inds], block, pfile, 2)
+            fit_sky_L2D(bn_offfiles[inds], block, pfile, 2)
+    
+            # First remove skies from flattened images to redo masks
+            print('Removing skies from flattened images....')
+            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, indx=n, diagnostic=False)
+            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, indx=n, diagnostic=False)
+    
+            # Re-masking flattened, de-skied images....
+            print('Killing old masks....')
+            for i in range(len(m_onfiles[inds])):
+                os.system('/bin/rm '+m_onfiles[inds][i])
+            for i in range(len(m_offfiles[inds])):
+                os.system('/bin/rm '+m_offfiles[inds][i])
+            print('Masking images....')
+            for f in pf_onfiles[inds]:
+                mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
+            for f in pf_offfiles[inds]:
+                mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
+    
+            # Then remove skies from unprocessed images to make new flat
+            print('Removing skies from unprocessed images....')
+            desky(onfiles[inds], p_onfiles[inds], pfile, 2)
+            desky(offfiles[inds], p_offfiles[inds], pfile, 2)
+    
+            # Making new flat from deskied raw images w/new masks
+            os.system('rm on/Flat'+str(n)+'.fits')
+            os.system('rm off/Flat'+str(n)+'.fits')
+            print('Making new flat....')
+            mk_flat(p_onfiles[inds], m_onfiles[inds], n, 'vmap_on.fits')
+            mk_flat(p_offfiles[inds], m_offfiles[inds], n, 'vmap_off.fits')
+    
+            # Now saving the outputs with appropriate filenames
+            print('Re-naming sky files....')
+            new_pfile = pfile[:pfile.find('.dat')]+str(n)+'.dat'
+            os.rename('on/'+pfile, 'on/'+new_pfile)
+            os.rename('off/'+pfile, 'off/'+new_pfile)
+            
+            # Diagnostic binned and masked images
+            # Only do this step on the last loop to save time
+            if (n == Nloops-1):
+                print('Making diagnostic binned and masked images....')
+                for i in range(len(onfiles[inds])):
+                    mk_bn_im(pf_onfiles[inds][i], m_onfiles[inds][i], bnpf_onfiles[inds][i], 9, bpmf='vmap_on.fits')
+                for i in range(len(offfiles[inds])):
+                    mk_bn_im(pf_offfiles[inds][i], m_offfiles[inds][i], bnpf_offfiles[inds][i], 9, bpmf='vmap_off.fits')
+    
+        # Moving the diagnostic images to the Trial directory
+        print('Saving diagnostic files in Trial'+str(m+1)+'/')
+        for i in range(len(bnpf_onfiles[inds])):
+            fnm_on = bnpf_onfiles[inds][i][bnpf_onfiles[inds][i].find(bnstr):]
+            fnm_off = bnpf_offfiles[inds][i][bnpf_offfiles[inds][i].find(bnstr):]
+            os.rename(bnpf_onfiles[inds][i], 'on/Trial'+str(m+1)+'/'+fnm_on)
+            os.rename(bnpf_offfiles[inds][i], 'off/Trial'+str(m+1)+'/'+fnm_off)
+        # Moving the Flats and pvals files to the Trial directory
+        print('Saving FlatN and pvalsN files to Trial'+str(m+1)+'/')
+        for i in range(Nloops):
+            os.rename('on/Flat'+str(i)+'.fits', 'on/Trial'+str(m+1)+'/Flat'+str(i)+'.fits')
+            os.rename('off/Flat'+str(i)+'.fits', 'off/Trial'+str(m+1)+'/Flat'+str(i)+'.fits')
+            os.rename('on/pvals'+str(i)+'.dat', 'on/Trial'+str(m+1)+'/pvals'+str(i)+'.dat')
+            os.rename('off/pvals'+str(i)+'.dat', 'off/Trial'+str(m+1)+'/pvals'+str(i)+'.dat')
