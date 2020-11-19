@@ -15,13 +15,21 @@ Steps for processing:
 4. From IRAF, run: `hsel *fits[0] $I,object,FAFLTNM,FBFLTNM yes > headers.lis` in both `/Calib` and `/Science`
 5. Run `reduce.py` in global data directory
 6. Move `skyflats.py` into new `/Flats` directory (produced by `reduce.py`)
-7. Run `skyflats.py`
+7. Remove bad data (ALDi270136, ALDi270137, ALDi290072 & ALDi290073)
+8. Run `skyflats.py`
+9. From IRAF run: 'hsel tz*fits $I 'OBJECT == "target"' > target.lis' in both '/Flats/on' and 'Flats/off'
+10. Move 'vmap_on/off.fits' into their respective directories in '/Flats' and 'hmtzALDi290079.fits' into '/Flats/on'
+11. Run 'more_reduction.py' in the global data directory
+12. From IRAF run in '/Mosaic':
+    --> hsel *fits $I yes > all.lis
+    --> hsel *fits $I 'FBFLTNM == "661_5"' > on.lis
+    --> hsel *fits $I 'FBFLTNM == "r_Gun 680_102"' > off.lis
+13. Run 'combine.py' in the global data directory
+
 
 Lingering issues (in no particular order):
 
-- Need to optimize NoiseChisel parameters for masking
-- What to do about vignetted regions?  Exclude?
-- Sky flats currently remove sky with plane fits; appears acceptable for on-band filter, but r-band seems to need a circular sky.  Consider adjusting sky subtraction to use IRAF `imsurfit`.
-- Sky flats currently only do one loop using all images.  For best testing, will need to incorporate half-splits as well, to ensure that there are no serious systematics occurring during flat construction.
-- Some examination of sky-subtracted images is needed to check how successful plane-fitting is doing.  After run, consider binning and masking pftz*.fits files.
-- Check for any bad data that shouldn't be included.
+- Sky flats currently only do one loop using all images.  For best testing, will need to incorporate half-splits as well, to ensure that there are no serious systematics occurring during flat construction..
+- Residual phantom light north of the galaxy remains in the mosaics, it is present in ~40% of individual frames.
+
+    
