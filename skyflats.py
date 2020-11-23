@@ -147,7 +147,7 @@ def flatten(flist, flat):
                      result=f[:f.find('tz')]+fstr+f[f.find('tz'):])
     
 
-def mk_mask(f, mstr, commands=''):
+def mk_mask(f, mstr, commands='', diagnostic=False):
     '''
     Creates a mask file by running GNUAstro package NoiseChisel on the
     image provided.
@@ -171,6 +171,9 @@ def mk_mask(f, mstr, commands=''):
     detections = ncIm[1].data
     fnm = f[:f.find(pre+'tz')]+mstr+f[f.find('tz'):]
     write_im_head(detections, ncIm[0].header, fnm)
+    if diagnostic:
+        dfnm = f[:f.find(pre+'tz')]+mstr+diagnostic+f[f.find('tz'):]
+        write_im_head(detections, ncIm[0].header, dfnm)
     os.remove(f[f.find(pre+'tz'):f.find('.fits')]+'_detected.fits')
     
     print('Removed NC output cube.')
@@ -446,7 +449,7 @@ def deplane(flist, plist, pfile, diagnostic=False):
             write_im_head(skyplane, im[0].header, plist[i]+'.sky')
 
             
-def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
+def desky(flist, plist, pfile, degree, vmap, indx=0, diagnostic=False):
     '''
     Removes sky fits from unflattened images
     Requires:
@@ -465,6 +468,7 @@ def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
     else:
         dir_nm = flist[0][:flist[0].find('tz')]
     pvals = asc.read(dir_nm+pfile)
+    vmap = fits.getdata(dir_nm + vmap)
     for i in range(len(flist)):
         im = fits.open(flist[i])
         dim1 = np.arange(1, im[0].data.shape[1]+1)
@@ -481,7 +485,10 @@ def desky(flist, plist, pfile, degree, indx=0, diagnostic=False):
                          c1_2 = pvals['c1_2'][i],
                          c2_2 = pvals['c2_2'][i])
         skyplane = m(X,Y)
-        skyplane /= np.mean(skyplane) # Normalize the sky
+        sky_good = skyplane.copy()
+        sky_good[vmap==1] = np.nan
+        mn = np.nanmean(sky_good[np.isfinite(sky_good)])
+        skyplane /= mn # Normalize the sky
         im[0].data /= skyplane
         write_im_head(im[0].data, im[0].header, plist[i])
         if diagnostic:
@@ -584,25 +591,26 @@ if __name__ == '__main__':
     
             # First remove skies from flattened images to redo masks
             print('Removing skies from flattened images....')
-            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, indx=n, diagnostic=False)
-            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, indx=n, diagnostic=False)
-    
-            # Re-masking flattened, de-skied images....
-            print('Killing old masks....')
-            for i in range(len(m_onfiles[inds])):
-                os.system('/bin/rm '+m_onfiles[inds][i])
-            for i in range(len(m_offfiles[inds])):
-                os.system('/bin/rm '+m_offfiles[inds][i])
-            print('Masking images....')
-            for f in pf_onfiles[inds]:
-                mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
-            for f in pf_offfiles[inds]:
-                mk_mask(f, mstr, commands='--outliersigma=25 --detgrowquant=0.75 --tilesize=60,60')
+            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, 'vmap_on.fits', indx=n, diagnostic=True)
+            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, 'vmap_off.fits', indx=n, diagnostic=True)
+
+            if (m, n) == (0, 0):
+                # Re-masking flattened, de-skied images....
+                print('Killing old masks....')
+                for i in range(len(m_onfiles[inds])):
+                    os.system('/bin/rm '+m_onfiles[inds][i])
+                for i in range(len(m_offfiles[inds])):
+                    os.system('/bin/rm '+m_offfiles[inds][i])
+                print('Masking images....')
+                for f in pf_onfiles[inds]:
+                    mk_mask(f, mstr, commands='--outliersigma=30 --detgrowquant=0.75 --tilesize=60,60', diagnostic=False)
+                for f in pf_offfiles[inds]:
+                    mk_mask(f, mstr, commands='--outliersigma=30 --detgrowquant=0.75 --tilesize=60,60', diagnostic=False)
     
             # Then remove skies from unprocessed images to make new flat
             print('Removing skies from unprocessed images....')
-            desky(onfiles[inds], p_onfiles[inds], pfile, 2)
-            desky(offfiles[inds], p_offfiles[inds], pfile, 2)
+            desky(onfiles[inds], p_onfiles[inds], pfile, 2, 'vmap_on.fits')
+            desky(offfiles[inds], p_offfiles[inds], pfile, 2, 'vmap_off.fits')
     
             # Making new flat from deskied raw images w/new masks
             os.system('rm on/Flat'+str(n)+'.fits')
