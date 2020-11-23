@@ -591,8 +591,8 @@ if __name__ == '__main__':
     
             # First remove skies from flattened images to redo masks
             print('Removing skies from flattened images....')
-            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, 'vmap_on.fits', indx=n, diagnostic=True)
-            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, 'vmap_off.fits', indx=n, diagnostic=True)
+            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, 'vmap_on.fits', indx=n, diagnostic=False)
+            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, 'vmap_off.fits', indx=n, diagnostic=False)
 
             if (m, n) == (0, 0):
                 # Re-masking flattened, de-skied images....
