@@ -1,6 +1,7 @@
 import numpy as np
 from pyraf import iraf
 from astropy.io import fits,ascii
+from astropy.modeling.models import Legendre2D
 import os
 
 def mask_image(hdulist, bpm='badpix.fits', objmask=0, handmask=0):
@@ -36,23 +37,33 @@ def mask_image(hdulist, bpm='badpix.fits', objmask=0, handmask=0):
     return hdulist
 
 #-----------------------------------------------------------------------------
-def skysub(dire,lis,ipref,mpref,bpm,overwrite=True):
+def skysub(dire,Ntrial,Nloops,degree=2,overwrite=True):
     '''
-    Subtracts a constant sky (median of the background) from images.
+    Subtracts sky models from images.
     '''
-    tab=ascii.read(dire+'/'+lis,format='no_header')
-    for ii in tab:
-        hdul = fits.open(dire+'/'+ipref+ii[0])
-        msk = fits.getdata(dire+'/'+mpref+ii[0])
-        bpmap = fits.getdata(dire+'/'+bpm)
-        bad = msk+bpmap
-        sky = np.median(hdul[0].data[bad == 0])
-        hdul[0].data = hdul[0].data - sky
-        hdul.writeto(dire+'/s'+ipref+ii[0],overwrite=overwrite)
-        hdul.close()
-        print('created s'+ipref+ii[0])
-        
+    pvals = ascii.read(dire+'/Trial'+str(Ntrial)+'/pvals'+str(Nloops-1)+'.dat')
+    for i in range(len(pvals)):
+        im=fits.open(dire+'/f'+pvals['fname'][i])
+        dim1 = np.arange(1, im[0].data.shape[1]+1)
+        dim2 = np.arange(1, im[0].data.shape[0]+1)
+        X, Y = np.meshgrid(dim1, dim2)
+        m = Legendre2D(degree, degree,
+                       c0_0 = pvals['c0_0'][i],
+                       c1_0 = pvals['c1_0'][i],
+                       c2_0 = pvals['c2_0'][i],
+                       c0_1 = pvals['c0_1'][i],
+                       c1_1 = pvals['c1_1'][i],
+                       c2_1 = pvals['c2_1'][i],
+                       c0_2 = pvals['c0_2'][i],
+                       c1_2 = pvals['c1_2'][i],
+                       c2_2 = pvals['c2_2'][i])
+        skyplane = m(X,Y)
+        im[0].data -= skyplane
+        im.writeto(dire+'/sf'+pvals['fname'][i], overwrite=overwrite)
+        im.close()
+        print('created sf'+pvals['fname'][i])
 
+        
 #-----------------------------------------------------------------------------
 def mask(dire,lis,ipref,mpref,bpm, overwrite=True):
     '''
@@ -101,13 +112,16 @@ if __name__ == '__main__':
     offbpm='vmap_off.fits'
     refim='refimage.fits'
 
-    print('Subtracting constant skies....')
-    skysub(ondir,tlis,'pf','M',onbpm)
-    skysub(offdir,tlis,'pf','M',offbpm)
+    Ntrial=5
+    Nloops=5
+
+    print('Subtracting skies....')
+    skysub(ondir,Ntrial,Nloops)
+    skysub(offdir,Ntrial,Nloops)
     
     print('Applying masks....')
-    mask(ondir,tlis,'spf','hm',onbpm)
-    mask(offdir,tlis,'spf','hm',offbpm)
+    mask(ondir,tlis,'sf','hm',onbpm)
+    mask(offdir,tlis,'sf','hm',offbpm)
 
     
     if os.path.isfile(refim):
@@ -120,11 +134,11 @@ if __name__ == '__main__':
         iraf.imcoords.ccsetwcs(refim, "", xref=1000, yref=1000, xmag=-0.2138004, ymag=0.2138004, lngref='02:12:54.6', latref='-19:19:06.0')
 
     print('Registering images to reference....')
-    register(ondir,tlis,'mspf',refim)
-    register(offdir,tlis,'mspf',refim)
+    register(ondir,tlis,'msf',refim)
+    register(offdir,tlis,'msf',refim)
 
     print('Moving registered images to new '+mosdir+' directory')
     if not os.path.isdir(mosdir):
         os.system('mkdir '+mosdir)
-    os.system('cp '+ondir+'/'+'Wmspf*fits '+mosdir)
-    os.system('cp '+offdir+'/'+'Wmspf*fits '+mosdir)
+    os.system('cp '+ondir+'/'+'Wmsf*fits '+mosdir)
+    os.system('cp '+offdir+'/'+'Wmsf*fits '+mosdir)
