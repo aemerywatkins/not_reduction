@@ -545,13 +545,18 @@ if __name__ == '__main__':
 
         # On first trial, use all images
         if (m == NTrials-1):
-            inds = np.arange(len(onfiles))
+            oninds = np.arange(len(onfiles))
+            offinds = np.arange(len(offfiles))
         # On remaining trials, use random half-splits of the images
         else:
-            inds = np.random.choice(np.arange(len(onfiles)),
+            oninds = np.random.choice(np.arange(len(onfiles)),
                                     size=len(onfiles)//2,
                                     replace=False)
-            inds = np.array(inds, dtype=int)
+            oninds = np.array(oninds, dtype=int)
+            offinds = np.random.choice(np.arange(len(offfiles)),
+                                    size=len(offfiles)//2,
+                                    replace=False)
+            offinds = np.array(offinds, dtype=int)
 
         # Removing previous run's output to start fresh
         # Preserves existing masks and CrudeFlat.fits
@@ -570,54 +575,55 @@ if __name__ == '__main__':
                 flat = 'CrudeFlat.fits'
             else:
                 flat = 'Flat'+str(n-1)+'.fits'
-            flatten(onfiles[inds], 'on/'+flat)
-            flatten(offfiles[inds], 'off/'+flat)
+            flatten(onfiles[oninds], 'on/'+flat)
+            flatten(offfiles[offinds], 'off/'+flat)
     
             # Binning images w/masks
-            if os.path.exists(bn_onfiles[inds][-1]):
+            if os.path.exists(bn_onfiles[oninds][-1]):
                 print('Killing previous binned images....')
                 os.system('/bin/rm on/'+bnstr+'*.fits')
                 os.system('/bin/rm off/'+bnstr+'*.fits')
             print('Binning masked images....')
-            for i in range(len(onfiles[inds])):
-                mk_bn_im(f_onfiles[inds][i], m_onfiles[inds][i], bn_onfiles[inds][i], block, bpmf='vmap_on.fits')
-            for i in range(len(offfiles[inds])):
-                mk_bn_im(f_offfiles[inds][i], m_offfiles[inds][i], bn_offfiles[inds][i], block, bpmf='vmap_off.fits')
+            for i in range(len(onfiles[oninds])):
+                mk_bn_im(f_onfiles[oninds][i], m_onfiles[oninds][i], bn_onfiles[oninds][i], block, bpmf='vmap_on.fits')
+            for i in range(len(offfiles[offinds])):
+                mk_bn_im(f_offfiles[offinds][i], m_offfiles[offinds][i], bn_offfiles[offinds][i], block, bpmf='vmap_off.fits')
         
             # Fitting sky to binned, masked images
             print('Fitting skies to images....')
-            fit_sky_L2D(bn_onfiles[inds], block, pfile, 2)
-            fit_sky_L2D(bn_offfiles[inds], block, pfile, 2)
+            fit_sky_L2D(bn_onfiles[oninds], block, pfile, 2)
+            fit_sky_L2D(bn_offfiles[offinds], block, pfile, 2)
     
             # First remove skies from flattened images to redo masks
             print('Removing skies from flattened images....')
-            desky(f_onfiles[inds], pf_onfiles[inds], pfile, 2, 'vmap_on.fits', indx=n, diagnostic=False)
-            desky(f_offfiles[inds], pf_offfiles[inds], pfile, 2, 'vmap_off.fits', indx=n, diagnostic=False)
+            desky(f_onfiles[oninds], pf_onfiles[oninds], pfile, 2, 'vmap_on.fits', indx=n, diagnostic=False)
+            desky(f_offfiles[offinds], pf_offfiles[offinds], pfile, 2, 'vmap_off.fits', indx=n, diagnostic=False)
 
+#            if True:
             if (m, n) == (0, 0):
                 # Re-masking flattened, de-skied images....
                 print('Killing old masks....')
-                for i in range(len(m_onfiles[inds])):
-                    os.system('/bin/rm '+m_onfiles[inds][i])
-                for i in range(len(m_offfiles[inds])):
-                    os.system('/bin/rm '+m_offfiles[inds][i])
+                for i in range(len(m_onfiles[oninds])):
+                    os.system('/bin/rm '+m_onfiles[oninds][i])
+                for i in range(len(m_offfiles[offinds])):
+                    os.system('/bin/rm '+m_offfiles[offinds][i])
                 print('Masking images....')
-                for f in pf_onfiles[inds]:
+                for f in pf_onfiles[oninds]:
                     mk_mask(f, mstr, commands='--outliersigma=30 --detgrowquant=0.75 --tilesize=60,60', diagnostic=False)
-                for f in pf_offfiles[inds]:
+                for f in pf_offfiles[offinds]:
                     mk_mask(f, mstr, commands='--outliersigma=30 --detgrowquant=0.75 --tilesize=60,60', diagnostic=False)
     
             # Then remove skies from unprocessed images to make new flat
             print('Removing skies from unprocessed images....')
-            desky(onfiles[inds], p_onfiles[inds], pfile, 2, 'vmap_on.fits')
-            desky(offfiles[inds], p_offfiles[inds], pfile, 2, 'vmap_off.fits')
+            desky(onfiles[oninds], p_onfiles[oninds], pfile, 2, 'vmap_on.fits')
+            desky(offfiles[offinds], p_offfiles[offinds], pfile, 2, 'vmap_off.fits')
     
             # Making new flat from deskied raw images w/new masks
             os.system('rm on/Flat'+str(n)+'.fits')
             os.system('rm off/Flat'+str(n)+'.fits')
             print('Making new flat....')
-            mk_flat(p_onfiles[inds], m_onfiles[inds], n, 'vmap_on.fits')
-            mk_flat(p_offfiles[inds], m_offfiles[inds], n, 'vmap_off.fits')
+            mk_flat(p_onfiles[oninds], m_onfiles[oninds], n, 'vmap_on.fits')
+            mk_flat(p_offfiles[offinds], m_offfiles[offinds], n, 'vmap_off.fits')
     
             # Now saving the outputs with appropriate filenames
             print('Re-naming sky files....')
@@ -629,18 +635,19 @@ if __name__ == '__main__':
             # Only do this step on the last loop to save time
             if (n == Nloops-1):
                 print('Making diagnostic binned and masked images....')
-                for i in range(len(onfiles[inds])):
-                    mk_bn_im(pf_onfiles[inds][i], m_onfiles[inds][i], bnpf_onfiles[inds][i], 9, bpmf='vmap_on.fits')
-                for i in range(len(offfiles[inds])):
-                    mk_bn_im(pf_offfiles[inds][i], m_offfiles[inds][i], bnpf_offfiles[inds][i], 9, bpmf='vmap_off.fits')
+                for i in range(len(onfiles[oninds])):
+                    mk_bn_im(pf_onfiles[oninds][i], m_onfiles[oninds][i], bnpf_onfiles[oninds][i], 9, bpmf='vmap_on.fits')
+                for i in range(len(offfiles[offinds])):
+                    mk_bn_im(pf_offfiles[offinds][i], m_offfiles[offinds][i], bnpf_offfiles[offinds][i], 9, bpmf='vmap_off.fits')
     
         # Moving the diagnostic images to the Trial directory
         print('Saving diagnostic files in Trial'+str(m+1)+'/')
-        for i in range(len(bnpf_onfiles[inds])):
-            fnm_on = bnpf_onfiles[inds][i][bnpf_onfiles[inds][i].find(bnstr):]
-            fnm_off = bnpf_offfiles[inds][i][bnpf_offfiles[inds][i].find(bnstr):]
-            os.rename(bnpf_onfiles[inds][i], 'on/Trial'+str(m+1)+'/'+fnm_on)
-            os.rename(bnpf_offfiles[inds][i], 'off/Trial'+str(m+1)+'/'+fnm_off)
+        for i in range(len(bnpf_onfiles[oninds])):
+            fnm_on = bnpf_onfiles[oninds][i][bnpf_onfiles[oninds][i].find(bnstr):]
+            os.rename(bnpf_onfiles[oninds][i], 'on/Trial'+str(m+1)+'/'+fnm_on)
+        for i in range(len(bnpf_offfiles[offinds])):
+            fnm_off = bnpf_offfiles[offinds][i][bnpf_offfiles[offinds][i].find(bnstr):]
+            os.rename(bnpf_offfiles[offinds][i], 'off/Trial'+str(m+1)+'/'+fnm_off)
         # Moving the Flats and pvals files to the Trial directory
         print('Saving FlatN and pvalsN files to Trial'+str(m+1)+'/')
         for i in range(Nloops):

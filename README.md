@@ -15,10 +15,10 @@ Steps for processing:
 4. From IRAF, run: `hsel *fits[0] $I,object,FAFLTNM,FBFLTNM yes > headers.lis` in both `/Calib` and `/Science`
 5. Run `reduce.py` in global data directory
 6. Move `skyflats.py` into new `/Flats` directory (produced by `reduce.py`)
-7. Remove bad data (ALDi270136, ALDi270137, ALDi290072 & ALDi290073)
-8. Run `skyflats.py`
-9. From IRAF run: 'hsel tz*fits $I 'OBJECT == "target"' > target.lis' in both '/Flats/on' and 'Flats/off'
-10. Move 'vmap_on/off.fits' into their respective directories in '/Flats' and 'hmtzALDi290079.fits' into '/Flats/on'
+7. Move 'vmap_on/off.fits' into their respective directories in '/Flats' and 'hmtzALDi290079.fits' into '/Flats/on'
+8. Remove bad data (ALDi270136, ALDi270137, ALDi290072, ALDi290085 & ALDi290073)
+9. Run `skyflats.py`
+10. From IRAF run: 'hsel tz*fits $I 'OBJECT == "target"' > target.lis' in both '/Flats/on' and 'Flats/off'
 11. Run 'more_reduction.py' in the global data directory
 12. From IRAF run in '/Mosaic':
     --> hsel *fits $I yes > all.lis
