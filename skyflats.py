@@ -274,7 +274,7 @@ def mk_flat(flist, mlist, indx, vmap, pflag=1):
                    reject='avsigclip',
                    masktype='goodvalue',
                    maskvalue=0,
-                   scale='mode',
+                   scale='median',
                    lthreshold=-50, # Should take care of the masking....
                    hthreshold='INDEF',
                    mclip='yes',
@@ -291,6 +291,64 @@ def mk_flat(flist, mlist, indx, vmap, pflag=1):
     write_im_head(flat[0].data, flat[0].header, outstr)
     print('Flat normalized.')
 
+def mk_flat_alt(flist, mlist, indx, vmap):
+    '''
+    Creates a flat using imcombine.  Rejects masked pixels by creating
+    .pl versions of the masks and adding these to the header of the
+    input images.
+    Requires:
+     - List of images that go into making the flat (tz*.fits)
+     - List of masks associated with the above images (M*.fits)
+     - Index of current loop in final flat-making process (int)
+     - Name of the vignetting mask (e.g., vmap_on.fits)
+     - Flag indicated whether to use the raw images (tz*) or
+     plane-corrected images (ptz*)
+
+    Set pflag to 0 for first iteration (before any planes are
+    measured).
+    Currently this uses ALL exposures, object and sky.
+    '''
+    dir_nm = mlist[0][:mlist[0].find(mstr)]
+    m_nm = mlist[0][mlist[0].find(mstr):]
+    if os.path.exists('on/'+m_nm[:m_nm.find('.fits')]+'.pl'):
+        print('Killing previous masks....')
+        os.system('/bin/rm '+dir_nm+'*.pl')
+    for i in range(len(flist)):
+        ima = fits.open(flist[i])
+        msk = fits.getdata(mlist[i])
+#        bpm = fits.getdata(dir_nm+vmap)
+#        ima[0].data[bpm == 1] = -999.
+        ima[0].data[msk == 1] = -999.
+        write_im_head(ima[0].data, ima[0].header, dir_nm+'m_'+flist[i][flist[i].find(pstr):])
+        ima.close()
+
+    instr =dir_nm+'m_'+pstr+'tz*.fits' # This only works if previous loop's gunk is deleted
+    outstr = dir_nm+'Flat'+str(indx)+'.fits' # Need to move these
+    # after all iterations
+    iraf.unlearn('imcombine')
+    iraf.imcombine(input=instr,
+                   output=outstr,
+                   combine='median',
+                   reject='avsigclip',
+                   masktype='none',
+                   maskvalue=0,
+                   scale='median',
+                   lthreshold=-50, # Should take care of the masking....
+                   hthreshold='INDEF',
+                   mclip='yes',
+                   lsigma=3.0,
+                   hsigma=3.0)
+    # Normalizing the output flat
+    flat = fits.open(outstr)
+    vmap = fits.getdata(dir_nm + vmap)
+    flat_data = flat[0].data.copy()
+    flat_data[vmap==1] = np.nan
+    mn = np.nanmean(flat_data[np.isfinite(flat_data)])
+    flat[0].data /= mn
+    
+    write_im_head(flat[0].data, flat[0].header, outstr)
+    print('Flat normalized.')
+    
 
 def fit_sky(bnlist, block, pfile):
     '''
