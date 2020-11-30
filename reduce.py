@@ -144,10 +144,10 @@ if __name__ == '__main__':
     if not os.path.exists('tzfiles'):
         os.mkdir('tzfiles')
     
-    for f in [i[6:-3] for i in rims]:
+    for f in [i[8:-3] for i in rims]:
         os.rename('tz'+f, "tzfiles/tz"+f)
     
-    for f in [i[6:-3] for i in onims]:
+    for f in [i[8:-3] for i in onims]:
         os.rename('tz'+f, "tzfiles/tz"+f)
     
     print('Moved processed sky+object images to /tzfiles')
