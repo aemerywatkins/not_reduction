@@ -17,7 +17,14 @@ Steps for processing:
 6. Move `skyflats.py` into new `/Flats` directory (produced by `reduce.py`)
 7. Move 'vmap_on/off.fits' into their respective directories in '/Flats' and 'hmtzALDi290079.fits' into '/Flats/on'
 8. Remove bad data (ALDi270136, ALDi270137, ALDi290072, ALDi290085 & ALDi290073)
-9. Run `skyflats.py`
+9. Run `skyflats.py` from Flats directory
+10. From main directory, run 'mk_mosaic.py'
+11. After mosaic is made, run 'skyflats_mosaic.py' to remake flat using altered sky subtraction
+12. Run 'mk_mosaic.py' again to remake mosaic using new sky subtraction
+
+
+# DEFUNCT BELOW
+================
 10. From IRAF run: 'hsel tz*fits $I 'OBJECT == "target"' > target.lis' in both '/Flats/on' and 'Flats/off'
 11. Run 'more_reduction.py' in the global data directory
 12. From IRAF run in '/Mosaic':
@@ -29,7 +36,8 @@ Steps for processing:
 
 Lingering issues (in no particular order):
 
-- Sky flats currently only do one loop using all images.  For best testing, will need to incorporate half-splits as well, to ensure that there are no serious systematics occurring during flat construction..
-- Residual phantom light north of the galaxy remains in the mosaics, it is present in ~40% of individual frames.
+- Test if iterating mosaic sky subtraction method improves final product at all (do by hand for now)
+- Need to test method with model galaxy to see if flux is being lost or gained using this method
+  -- Inject model into tz* frames, then run through the whole pipeline and compare output w/model parameters
 
     
