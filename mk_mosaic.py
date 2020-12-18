@@ -6,7 +6,6 @@ from astropy.io import ascii as asc
 from astropy.table import Table
 import os
 from shutil import copyfile
-from astropy.wcs import WCS
 
 # Precursor values for convenience
 sfstr = 'sf' # prefix for sky-subtracted and flat-fielded images

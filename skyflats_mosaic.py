@@ -8,7 +8,6 @@ from pyraf import iraf
 import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 from scipy import ndimage
-from astropy.wcs import WCS
 
 Nloops = 2
 block = 64 # MUST BE LARGE!  Change at your own risk.
@@ -278,14 +277,6 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
             os.remove(outlist[i])
         im = fits.open(inlist[i])
         if im[0].header['OBJECT'] == 'target':
-            if os.path.exists(inlist[i][:inlist[i].find('_mos')]+'/hm'+inlist[i][inlist[i].find('tz'):]):
-                msknm = inlist[i][:inlist[i].find('_mos')]+'/hm'+inlist[i][inlist[i].find('tz'):]
-                msk = fits.open(msknm)
-                im[0].data[msk[0].data == 1] = -999
-                im.writeto('tmp.fits',overwrite=True)
-                ima = msknm+'tmp.fits'
-            else:
-                ima = inlist[i]
             # ---------------------------------------------------
             # First, rotate and flip mosaic to appropriate position angle
             posang = 90. - im[0].header['FIELD']
@@ -295,7 +286,7 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
             # ---------------------------------------------------
             # Next, use a chosen star to shift mosaic to appropriate coordinates
             # File name is star.coo, contains one row: RA(deg) Dec(deg)
-            iraf.digiphot.apphot.phot(image=ima,
+            iraf.digiphot.apphot.phot(image=inlist[i],
                                       output=inlist[i]+'.mag.1',
                                       coords=star_coo,
                                       wcsin='world',
