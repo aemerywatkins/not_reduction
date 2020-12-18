@@ -9,7 +9,6 @@ import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 from scipy import ndimage
 
-
 Nloops = 2
 block = 64 # MUST BE LARGE!  Change at your own risk.
 ondir = 'on_mos/'
@@ -261,6 +260,8 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
      - file name of the mosaic to be subtracted
      - file containing the coordinates of a reference star
     '''
+    if os.path.exists('hand_shifts.dat'):
+        handshifts = asc.read('hand_shifts.dat', format='no_header')
     mos = fits.open(mosaic)
     iraf.images()
     iraf.immatch()
@@ -268,23 +269,32 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
     iraf.noao.digiphot.apphot()
     iraf.unlearn('centerpars')
     iraf.unlearn('phot')
-    iraf.noao.digiphot.apphot.datapars.fwhmpsf = '5.08'
-    iraf.noao.digiphot.apphot.centerpars.cbox = '70.'
+    iraf.noao.digiphot.apphot.datapars.fwhmpsf = '4.8'
+    iraf.noao.digiphot.apphot.centerpars.cbox = '65.'
     iraf.noao.digiphot.apphot.centerpars.calgorithm = 'gauss'
     for i in range(len(inlist)):
         if overwrite and os.path.exists(outlist[i]):
             os.remove(outlist[i])
         im = fits.open(inlist[i])
         if im[0].header['OBJECT'] == 'target':
+            if os.path.exists(inlist[i][:inlist[i].find('_mos')]+'/hm'+inlist[i][inlist[i].find('tz'):]):
+                msknm = inlist[i][:inlist[i].find('_mos')]+'/hm'+inlist[i][inlist[i].find('tz'):]
+                msk = fits.open(msknm)
+                im[0].data[msk[0].data == 1] = -999
+                im.writeto('tmp.fits',overwrite=True)
+                ima = msknm+'tmp.fits'
+            else:
+                ima = inlist[i]
             # ---------------------------------------------------
             # First, rotate and flip mosaic to appropriate position angle
             posang = 90. - im[0].header['FIELD']
             iraf.rotate(input=mosaic, output=inlist[i]+'.mos.fits', rotation=posang)
             rtmos = fits.open(inlist[i]+'.mos.fits')
+
             # ---------------------------------------------------
             # Next, use a chosen star to shift mosaic to appropriate coordinates
             # File name is star.coo, contains one row: RA(deg) Dec(deg)
-            iraf.digiphot.apphot.phot(image=inlist[i],
+            iraf.digiphot.apphot.phot(image=ima,
                                       output=inlist[i]+'.mag.1',
                                       coords=star_coo,
                                       wcsin='world',
@@ -307,8 +317,17 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
             shiftsx = -(moscensx-censx)
             shiftsy = -(moscensy-censy)
             print(shiftsx, shiftsy)
-            shiftx = np.median(shiftsx)
-            shifty = np.median(shiftsy)
+            # ---------------------------------------------------
+            # apply hand shifts
+            hx = 0
+            hy = 0
+            if os.path.exists('hand_shifts.dat'):
+                for hs in handshifts:
+                    if hs['col1'] == inlist[i][inlist[i].find('tz'):]:
+                        hx = hs['col2']
+                        hy = hs['col3']
+            shiftx = np.median(shiftsx) + hx
+            shifty = np.median(shiftsy) + hy
             iraf.imshift(input=inlist[i]+'.mos.fits',
                          output=inlist[i]+'.mos.fits',
                          xshift=shiftx,
@@ -326,9 +345,10 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
             os.remove(inlist[i]+'.mag.1')
             os.remove(inlist[i]+'.mag.2')
             os.remove(inlist[i]+'.mos.fits')
+            if os.path.exists('tmp.fits'):
+                os.remove('tmp.fits')
         else:
             os.system('cp '+inlist[i]+' '+outlist[i])
-
 
 def sky_sub(flist):
     '''

@@ -7,8 +7,13 @@ from astropy.table import Table
 import os
 from shutil import copyfile
 
-
 # Precursor values for convenience
+sfstr = 'sf' # prefix for sky-subtracted and flat-fielded images
+mstr = 'm' # prefix for masked images
+Wstr = 'W' # prefix for registered images
+shstr = 'sh' # prefix for shifted images
+Pstr = 'P' # prefix for photometrically scaled images 
+hmstr = 'hm' # prefix for handmasks
 if os.path.exists('Flats/on_mos'):
     ondir = 'Flats/on_mos'
     offdir = 'Flats/off_mos'
@@ -30,38 +35,34 @@ Ntrial = 5
 Nloops = 5
 
 
-def mask_image(hdulist, bpm='badpix.fits', objmask=0, handmask=0):
+def mask(dire, lis, ipref, mpref, bpm, overwrite=True):
     '''
-    Returns a version of the input image where masked pixels are set to -999
-    Requires:
-        --Image HDUList, output from e.g. fits.open()
-        --Name of bad pixel mask file
-        --Name of other mask file; if you want to use only the bpm, don't give this a value
-        --Name of hand mask file; if you don't have it, don't give this a value
-    Returns:
-        --HDUList with data now masked (masked pixels replaced with -999)
+    Masks images with object masks + bad pixel map
+    Masked pixels are set to -999
     '''
-    bpmdat = fits.getdata(bpm)
-    
-    if objmask != 0:
-        objmaskdat = fits.getdata(objmask)
-    else:
-        objmaskdat = bpmdat * 0.0
+    tab=asc.read(dire+'/'+lis, format='no_header')
+    for ii in tab:
+        ima=ipref+ii[0]
+        msk=0
+        if os.path.exists(dire+'/'+mpref+ii[0]):
+            msk=dire+'/'+mpref+ii[0]
+        hdulist=fits.open(dire+'/'+ima)
+        bpmdat = fits.getdata(dire+'/'+bpm)
         
-    if handmask != 0:
-        handmaskdat = fits.getdata(handmask)
-    else:
-        handmaskdat = bpmdat * 0.0
+        if msk != 0:
+            handmaskdat = fits.getdata(msk)
+        else:
+            handmaskdat = bpmdat * 0.0
     
-    # Note: use of this on the raw frames results in these becoming values of 
-    # 64537.  Probably this is because the raw frames are 16 bit, so use only
-    # with processed frames.
-    hdulist[0].data[bpmdat != 0] = -999
-    hdulist[0].data[objmaskdat != 0] = -999
-    hdulist[0].data[handmaskdat != 0] = -999
-    
-    return hdulist
-
+        # Note: use of this on the raw frames results in these becoming values of 
+        # 64537.  Probably this is because the raw frames are 16 bit, so use only
+        # with processed frames.
+        hdulist[0].data[bpmdat != 0] = -999
+        hdulist[0].data[handmaskdat != 0] = -999
+        hdulist.writeto(dire+'/'+mstr+ima, overwrite=overwrite)
+        hdulist.close()
+        
+        print('created '+mstr+ima)
 
 def skysub_legendre(dire, Ntrial, Nloops, degree=2, overwrite=True):
     '''
@@ -99,25 +100,7 @@ def skysub_legendre(dire, Ntrial, Nloops, degree=2, overwrite=True):
         print('created sf'+pvals['fname'][i])
 
 
-def mask(dire, lis, ipref, mpref, bpm, overwrite=True):
-    '''
-    Masks images with object masks + bad pixel map.
-    '''
-    tab=asc.read(dire+'/'+lis, format='no_header')
-    for ii in tab:
-        ima=ipref+ii[0]
-        msk=0
-        if os.path.exists(dire+'/'+mpref+ii[0]):
-            msk=dire+'/'+mpref+ii[0]
-        hdul=fits.open(dire+'/'+ima)
-        hdul=mask_image(hdul,dire+'/'+bpm, objmask=msk)
-        hdul.writeto(dire+'/m'+ima, overwrite=overwrite)
-        hdul.close()
-        
-        print('created m'+ima)
-
-
-def register(dire, lis, ipref, ref, prefix='W', overwrite=True):
+def register(dire, lis, ipref, ref, prefix=Wstr, overwrite=True):
     '''
     Registers images to a reference image. Requires:
         --lis, file name of list of images (no header)
@@ -154,10 +137,10 @@ def mk_target_list(dirnm):
         if header['OBJECT'] == 'target':
             keep.append(nm[nm.find('tz') : ])
 
-    asc.write([keep], dirnm+'target.lis', format='no_header', overwrite=True)
+    asc.write([keep], dirnm+'/target.lis', format='no_header', overwrite=True)
 
 
-def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
+def shift(dire, lis, ipref, star, mosaic=False, prefix=shstr, overwrite=True):
     '''
     Uses phot to align images. Requires:
         --lis, file name of list of images (no header)
@@ -171,7 +154,7 @@ def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
     iraf.unlearn('centerpars')
     iraf.unlearn('phot')
     iraf.noao.digiphot.apphot.datapars.fwhmpsf='4.54'
-    iraf.noao.digiphot.apphot.centerpars.cbox='70.'
+    iraf.noao.digiphot.apphot.centerpars.cbox='75.'
     iraf.noao.digiphot.apphot.centerpars.calgorithm='gauss'
     iraf.digiphot.apphot.phot(image=dire+'/'+ims,
                               output='tmp.mag',
@@ -268,7 +251,7 @@ def phot_standard(dire, lis, ipref, region, overwrite=True):
     print('wrote '+lis[:-4]+'_es.cat')
 
 
-def phot_scale(dire, lis, ipref, std, prefix='P', overwrite=True):
+def phot_scale(dire, lis, ipref, std, prefix=Pstr, overwrite=True):
     '''
     Scales images photometrically. Requires:
         --lis, file name of list of images (no header)
@@ -330,8 +313,7 @@ def combine(dire, lis, ipref, mosaic, overwrite=True):
     iraf.imcombine(input=ims,
                    output=mosaic,
                    masktype='none',
-                   scale='exposure', # ?? Is this appropriate?  None, or median?
-                   expname='EXPTIME',
+                   scale='none', # ?? Is this appropriate?  None, or median?
                    lthreshold='-500.0', # Scatter in BG is actually ~200 ADU
                    combine='median',
                    reject='sigclip',
@@ -354,10 +336,10 @@ if __name__ == '__main__':
     #First clear previous outputs
     if os.path.exists('Mosaic'):
         os.system('/bin/rm -r Mosaic')
-        os.system('/bin/rm '+ondir+'/W*.fits')
-        os.system('/bin/rm '+offdir+'/W*.fits')
-        os.system('/bin/rm '+ondir+'/msftz*.fits')
-        os.system('/bin/rm '+offdir+'/msftz*.fits')
+        os.system('/bin/rm '+ondir+'/'+Wstr+'*.fits')
+        os.system('/bin/rm '+offdir+'/'+Wstr+'*.fits')
+        os.system('/bin/rm '+ondir+'/'+mstr+sfstr+'tz*.fits')
+        os.system('/bin/rm '+offdir+'/'+mstr+sfstr+'tz*.fits')
     if os.path.exists(onmos) or os.path.exists(offmos):
         os.system('/bin/rm '+onmos)
         os.system('/bin/rm '+offmos)
@@ -367,8 +349,8 @@ if __name__ == '__main__':
     mk_target_list(offdir)
     
     print('Applying masks....')
-    mask(ondir, tlis, 'sf', 'hm', onbpm)
-    mask(offdir,tlis,'sf','hm',offbpm)
+    mask(ondir, tlis, sfstr, hmstr, onbpm)
+    mask(offdir, tlis, sfstr, hmstr, offbpm)
 
     if os.path.isfile(refim):
         print('Reference image already exists, skipping creation.')
@@ -393,20 +375,20 @@ if __name__ == '__main__':
                                latunits = 'hours') # For safety
         
     print('Registering images to reference....')
-    register(ondir, tlis, 'msf', refim)
-    register(offdir, tlis, 'msf', refim)
+    register(ondir, tlis, mstr+sfstr, refim)
+    register(offdir, tlis, mstr+sfstr, refim)
 
     print('Moving registered images to new '+mosdir+' directory')
     if not os.path.isdir(mosdir):
         os.system('mkdir '+mosdir)
-    os.system('cp '+ondir+'/'+'Wmsf*fits '+mosdir)
-    os.system('cp '+offdir+'/'+'Wmsf*fits '+mosdir)
+    os.system('cp '+ondir+'/'+Wstr+mstr+sfstr+'*fits '+mosdir)
+    os.system('cp '+offdir+'/'+Wstr+mstr+sfstr+'*fits '+mosdir)
 
     copyfile(ondir + '/target.lis', mosdir + '/on.lis')
     copyfile(offdir + '/target.lis', mosdir + '/off.lis')
     # Makes the lists local to work with IRAF
-    adjust_lists(onlis, 'Wmsf')
-    adjust_lists(offlis, 'Wmsf')
+    adjust_lists(onlis, Wstr+mstr+sfstr)
+    adjust_lists(offlis, Wstr+mstr+sfstr)
     # Combines both bands into one list
     os.system('cat '+mosdir+'/on.lis '+mosdir+'/off.lis > '+mosdir+'/all.lis')
 
@@ -416,15 +398,15 @@ if __name__ == '__main__':
     shift(mosdir, 'all.lis', '', star)
 
     print('Calculating the photometric standard....')
-    phot_standard(mosdir, onlis, 'sh', region)
-    phot_standard(mosdir, offlis, 'sh', region)
+    phot_standard(mosdir, onlis, shstr, region)
+    phot_standard(mosdir, offlis, shstr, region)
 
     print('Photometric scaling....')
-    phot_scale(mosdir, onlis, 'sh', 'on_es.cat')
-    phot_scale(mosdir, offlis, 'sh', 'off_es.cat')
+    phot_scale(mosdir, onlis, shstr, 'on_es.cat')
+    phot_scale(mosdir, offlis, shstr, 'off_es.cat')
 
     print('Combining to final mosaics....')
-    combine(mosdir, onlis, 'Psh', onmos)
-    combine(mosdir, offlis, 'Psh', offmos)
+    combine(mosdir, onlis, Pstr+shstr, onmos)
+    combine(mosdir, offlis, Pstr+shstr, offmos)
 
     print('Wrote '+onmos+' & '+offmos)
