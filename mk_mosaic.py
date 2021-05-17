@@ -3,6 +3,8 @@ import numpy as np
 from pyraf import iraf
 from astropy.io import fits
 from astropy.io import ascii as asc
+from astropy.modeling.models import custom_model, Legendre2D
+from astropy.modeling.fitting import LevMarLSQFitter, LinearLSQFitter
 from astropy.table import Table
 import os
 from shutil import copyfile
@@ -26,9 +28,50 @@ star = 'star.coo'
 region = 'ellphot.reg'
 onmos = 'ESO544_027_ha.fits'
 offmos = 'ESO544_027_r.fits'
-Ntrial = 5
-Nloops = 5
+## Auto-generate from Flats directory
+trialdirs = glob.glob('Flats/on/Trial*')
+#trialnums = [int(i[-1]) for i in trialdirs]
+#Ntrial = np.max(trialnums)
+Ntrial = 1
+# Also auto-generate
+loopfiles = glob.glob(trialdirs[0]+'/pvals*')
+loopnums = [int(i[-5]) for i in loopfiles]
+Nloops = np.max(loopnums)
+fstr = 'f'
+onfiles = np.array(glob.glob('Flats/on/tz*.fits'))
+offfiles = np.array(glob.glob('Flats/off/tz*.fits'))
 
+
+def write_im_head(imarr, head, fname):
+    '''
+    Write out an image array, with the specified header, to the hard disk.
+    Requires:
+      - Image array to be written as FITS image
+      - Header object (hdu[i].header)
+      - File name to write to the disk
+
+    Automatically overwrites files of the same name, so use caution!
+    '''
+    hdu = fits.PrimaryHDU(imarr, header=head)
+    hdulist = fits.HDUList([hdu])
+    hdulist.writeto(fname, overwrite=True)
+    
+
+def flatten(flist, flat):
+    '''
+    Flattens all images in a list of images.
+    Requires:
+     - List of image names to be flattened
+     - Name of the flat to be used to flatten the images (string)
+    '''
+    for f in flist:
+        if os.path.exists(f[:f.find('tz')]+fstr+f[f.find('tz'):]):
+            os.remove(f[:f.find('tz')]+fstr+f[f.find('tz'):])
+        iraf.imarith(operand1=f,
+                     op='/',
+                     operand2=flat,
+                     result=f[:f.find('tz')]+fstr+f[f.find('tz'):])
+        
 
 def mask_image(hdulist, bpm='badpix.fits', objmask=0, handmask=0):
     '''
@@ -74,7 +117,7 @@ def skysub_legendre(dire, Ntrial, Nloops, degree=2, overwrite=True):
     Return:
       -- Nothing, but write sky subtracted images to the disk
     '''
-    pvals = asc.read(dire+'/Trial'+str(Ntrial)+'/pvals'+str(Nloops-1)+'.dat')
+    pvals = asc.read(dire+'/Trial'+str(Ntrial)+'/pvals'+str(Nloops)+'.dat')
     
     for i in range(len(pvals)):
         im=fits.open(dire+'/f'+pvals['fname'][i])
@@ -123,6 +166,8 @@ def register(dire, lis, ipref, ref, prefix='W', overwrite=True):
         --lis, file name of list of images (no header)
         --ipref, prefix for the image names
         --ref, a reference image
+
+    OUTDATED: use only if headers not updated using Astrometry.net!
     '''
     if overwrite:
         imlist = asc.read(dire+'/'+lis, format='no_header')
@@ -143,6 +188,33 @@ def register(dire, lis, ipref, ref, prefix='W', overwrite=True):
                    fluxconserve='no')
 
 
+def register_swarp(dire, lis, ipref, ref, prefix='W', overwrite=True):
+    '''
+    Registers images to a reference image, using SWarp
+    First runs SCamp to output necessary files
+    '''
+    imlist = asc.read(dire+'/'+lis, format='no_header')
+    if overwrite:
+        for i in imlist['col1']:
+            if os.path.exists(dire+'/'+prefix+ipref+i):
+                os.remove(dire+'/'+prefix+ipref+i)
+
+    ims = [dire+'/'+ipref+i for i in imlist['col1']]
+    for i in range(len(ims)):
+        if not os.path.exists(ims[i][:-5]+'.head'):
+            os.system('/usr/bin/source-extractor '+ims[i])
+            os.system('/usr/local/bin/scamp output.cat') # Ensure scamp.conf points to GAIA-EDR3
+            os.system('/bin/mv output.head '+ims[i][:-5]+'.head')
+        os.system('/usr/bin/SWarp '+ref+' '+ims[i]) # Using apt install swarp version (2014)
+        wim = fits.open('coadd.fits')
+        refim = fits.getdata(ref)
+        # Expanding and fixing masks
+        wim[0].data[wim[0].data < -400] = -999
+        wim[0].data[wim[0].data == 0] = -999
+        write_im_head(wim[0].data, wim[0].header, dire+'/'+prefix+ipref+imlist['col1'][i])
+    os.system('/bin/rm coadd.fits coadd.weight.fits')
+    
+
 def mk_target_list(dirnm):
     '''
     Creates files 'target.lis', lists of image names of only galaxy images
@@ -154,7 +226,7 @@ def mk_target_list(dirnm):
         if header['OBJECT'] == 'target':
             keep.append(nm[nm.find('tz') : ])
 
-    asc.write([keep], dirnm+'target.lis', format='no_header', overwrite=True)
+    asc.write([keep], dirnm+'/target.lis', format='no_header', overwrite=True)
 
 
 def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
@@ -171,8 +243,12 @@ def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
     iraf.unlearn('centerpars')
     iraf.unlearn('phot')
     iraf.noao.digiphot.apphot.datapars.fwhmpsf='4.54'
-    iraf.noao.digiphot.apphot.centerpars.cbox='70.'
+    iraf.noao.digiphot.apphot.centerpars.cbox='50.'
     iraf.noao.digiphot.apphot.centerpars.calgorithm='gauss'
+    iraf.noao.digiphot.apphot.centerpars.maxshift=100
+    iraf.noao.digiphot.apphot.photpars.apertures=10
+    iraf.noao.digiphot.apphot.fitskypars.annulus=20
+    iraf.noao.digiphot.apphot.fitskypars.dannulus=10
     iraf.digiphot.apphot.phot(image=dire+'/'+ims,
                               output='tmp.mag',
                               coords=star,
@@ -182,24 +258,26 @@ def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
                               interactive='No')
     
     phottab = asc.read('tmp.mag')
-    os.remove('tmp.mag')
+    #os.remove('tmp.mag')
 
+    # Picks the first image in the list to register the others
     if mosaic == False:
         tab = asc.read(dire+'/'+lis, format='no_header')
         mosaic = dire + '/' + ipref + tab['col1'][0]
 
     iraf.phot(image=mosaic,
-              output='tmp2.mag',
+              output='ref.mag',
               coords=star,
               wcsin='world',
               wcsout='logical',
               verify='No',
               interactive='No')
-    reftab = asc.read('tmp2.mag')
-    os.remove('tmp2.mag')
+    reftab = asc.read('ref.mag')
+    #os.remove('tmp2.mag')
+    
     refx = reftab['XCENTER'][0]
     refy = reftab['YCENTER'][0]
-    
+        
     imlist = asc.read(dire+'/'+lis, format='no_header')
     ims2 = [ipref + i for i in imlist['col1']]
 
@@ -218,6 +296,19 @@ def shift(dire, lis, ipref, star, mosaic=False, prefix='sh', overwrite=True):
                      boundary_type='nearest',
                      constant=0.0)
         print('Created '+prefix+ims2[i])
+
+
+def adjust_shifts(dire, lis, ipref, prefix='sh2'):
+    iraf.noao.digiphot()
+    iraf.noao.digiphot.apphot()
+    iraf.unlearn('centerpars')
+    iraf.unlearn('phot')
+    iraf.noao.digiphot.apphot.datapars.fwhmpsf='4.54'
+    iraf.noao.digiphot.apphot.centerpars.cbox='70.'
+    iraf.noao.digiphot.apphot.centerpars.calgorithm='gauss'
+    
+    reftab = asc.read('ref.mag')
+    
 
 
 def phot_standard(dire, lis, ipref, region, overwrite=True):
@@ -346,6 +437,20 @@ def adjust_lists(lisnm, pref):
     asc.write([new_lis], mosdir+'/'+lisnm, format='no_header', overwrite=True)
 
 
+def fix_mos_header(mosnm):
+    mosim = fits.open(mosnm)
+    want = mosim[0].data <= -400
+    write_im_head(np.array(want, dtype=float), mosim[0].header, 'flag.fits')
+    iraf.chpixtype('flag.fits', 'flag.fits', newpixtype='int')
+    os.system('/usr/bin/source-extractor '+mosnm+' -FLAG_IMAGE flag.fits')
+    os.system('/usr/local/bin/scamp output.cat')
+    os.system('/bin/mv output.head '+mosnm[:-5]+'.head')
+    os.system('/usr/bin/SWarp refimage.fits '+mosnm)
+    # Ovewriting old mosaic with the new image header version
+    os.system('/bin/mv coadd.fits '+mosnm)
+    os.system('/bin/rm flag.fits coadd.weight.fits output.cat *.png')
+
+
 if __name__ == '__main__':
     # Assumes vmap_on.fits, vmap_off.fits in on/ and off/ flats directories already
     # (Should be from previous reduction steps)
@@ -361,14 +466,31 @@ if __name__ == '__main__':
     if os.path.exists(onmos) or os.path.exists(offmos):
         os.system('/bin/rm '+onmos)
         os.system('/bin/rm '+offmos)
-    
+
+    # Do the polynomial subtraction on the first run
+    if not os.path.exists('Flats/on_mos'):
+        print('Flattening images...')
+        onflat = 'Flats/on/Trial1/Flat'+str(Nloops)+'.fits'
+        offflat = 'Flats/off/Trial1/Flat'+str(Nloops)+'.fits'
+        flatten(onfiles, onflat)
+        flatten(offfiles, offflat)
+
+        print('Subtracting skies....')
+        skysub_legendre(ondir, Ntrial, Nloops)
+        skysub_legendre(offdir, Ntrial, Nloops)
+
+        # Making cosmic ray masks for next step
+        print('Doing cosmic ray rejection...')
+        os.system('/home/aew/anaconda3/bin/python3 clean_cr.py sf 0')
+        
     # Creates list of object exposures in each directory
+    print(ondir)
     mk_target_list(ondir)
     mk_target_list(offdir)
     
     print('Applying masks....')
     mask(ondir, tlis, 'sf', 'hm', onbpm)
-    mask(offdir,tlis,'sf','hm',offbpm)
+    mask(offdir, tlis, 'sf', 'hm', offbpm)
 
     if os.path.isfile(refim):
         print('Reference image already exists, skipping creation.')
@@ -388,19 +510,24 @@ if __name__ == '__main__':
                                xmag = -0.2138004,
                                ymag = 0.2138004,
                                lngref = '02:12:54.6',
-                               latref = '-19:19:06.0',
+                               latref = '-19:18:59.5',
                                lngunits = 'hours', # For safety
                                latunits = 'hours') # For safety
+
+    print('Cleaning cosmic ray hits...')
+    os.system('/home/aew/anaconda3/bin/python3 clean_cr.py msf 1')
         
     print('Registering images to reference....')
-    register(ondir, tlis, 'msf', refim)
-    register(offdir, tlis, 'msf', refim)
+    #register(ondir, tlis, 'msf', refim)
+    #register(offdir, tlis, 'msf', refim)
+    register_swarp(ondir, tlis, 'msf', refim)
+    register_swarp(offdir, tlis, 'msf', refim)
 
     print('Moving registered images to new '+mosdir+' directory')
     if not os.path.isdir(mosdir):
         os.system('mkdir '+mosdir)
-    os.system('cp '+ondir+'/'+'Wmsf*fits '+mosdir)
-    os.system('cp '+offdir+'/'+'Wmsf*fits '+mosdir)
+    os.system('/bin/mv '+ondir+'/'+'Wmsf*fits '+mosdir)
+    os.system('/bin/mv '+offdir+'/'+'Wmsf*fits '+mosdir)
 
     copyfile(ondir + '/target.lis', mosdir + '/on.lis')
     copyfile(offdir + '/target.lis', mosdir + '/off.lis')
@@ -428,3 +555,13 @@ if __name__ == '__main__':
     combine(mosdir, offlis, 'Psh', offmos)
 
     print('Wrote '+onmos+' & '+offmos)
+
+    print('Adjusting mosaic WCS info...')
+    # Detection w/SExtractor, run Scamp to produce header, then run
+    # SWarp, stacking mosaic with refimage.
+    # ACK!  Not consistent from run to run.  Maybe skip.
+    #fix_mos_header(onmos)
+    #fix_mos_header(offmos)
+    # NOTE: probably still do a manual pixel shift to get these aligned
+    # if desired, but for first run they only need match for alignment
+    # with the input images.

@@ -4,13 +4,18 @@ import glob
 import sys
 from astropy.io import fits
 from astropy.io import ascii as asc
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
 from pyraf import iraf
 import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 from scipy import ndimage
 
 
-Nloops = 2
+trialdirs = glob.glob('on/Trial*')
+loopfiles = glob.glob(trialdirs[0]+'/pvals*')
+loopnums = [int(i[-5]) for i in loopfiles]
+Nloops = np.max(loopnums)
 block = 64 # MUST BE LARGE!  Change at your own risk.
 ondir = 'on_mos/'
 offdir = 'off_mos/'
@@ -253,6 +258,42 @@ def mk_flat(flist, mlist, indx, vmap, pflag=1):
     print('Flat normalized.')
 
 
+def flux_scale_gal(mosTrimNm, imNm, galRa, galDec, galRad):
+    '''
+    Uses a circular aperture around the galaxy to scale the trimmed
+    mosaic in flux to the image it's being subtracted from.  Results in
+    less systematic over- and under-subtraction due to this method.
+
+    mosTrimNm: file name of the trimmed mosaic to be subtracted
+    imNm : file name of image you want to derive the sky on
+    galRa : galaxy right ascension in degrees
+    galDec : galaxy declination in degrees
+    galRad : maximum photometry radius, in pixels
+
+    Returns a scale factor, doing a linear fit within certain flux bounds.
+    If the scale factors seem nonsensical, try adjusting the flux bounds.
+    '''
+    mos = fits.open(mosTrimNm)
+    im = fits.open(imNm)
+    medsky = np.nanmedian(im[0].data[im[0].data > -400])
+    
+    wcs = WCS(im[0].header)
+    coo = wcs.wcs_world2pix(galRa, galDec, 1)
+
+    x = np.arange(1, im[0].data.shape[0]+1)
+    y = x.reshape(-1, 1)
+    rad = np.sqrt((x-coo[0])**2 + (y-coo[1])**2)
+    wantRad = rad <= galRad
+    cutoutIm = im[0].data[wantRad]
+    cutoutMos = mos[0].data[wantRad]
+    want = (cutoutIm < medsky+4000) & (cutoutMos < 4000)
+    wantmsk = (cutoutIm > 200) & (cutoutMos > 200)
+
+    fit = np.polyfit(cutoutMos[want & wantmsk], cutoutIm[want & wantmsk], 1)
+
+    return fit[0]
+
+
 def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
     '''
     Subtracts a mosaic from images. Requires:
@@ -275,16 +316,20 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
         if overwrite and os.path.exists(outlist[i]):
             os.remove(outlist[i])
         im = fits.open(inlist[i])
+        dirnm = inlist[i][:inlist[i].find('ftz')]
+        crnm = dirnm+'cr_s'+inlist[i][inlist[i].find('ftz'):]
+        bandnm = inlist[i][:inlist[i].find('_mos')]
         if im[0].header['OBJECT'] == 'target':
             # ---------------------------------------------------
             # First, rotate and flip mosaic to appropriate position angle
             posang = 90. - im[0].header['FIELD']
             iraf.rotate(input=mosaic, output=inlist[i]+'.mos.fits', rotation=posang)
             rtmos = fits.open(inlist[i]+'.mos.fits')
-            # ---------------------------------------------------
+
             # Next, use a chosen star to shift mosaic to appropriate coordinates
+            # Use the CR masked version of the image for this, to avoid centroid issues
             # File name is star.coo, contains one row: RA(deg) Dec(deg)
-            iraf.digiphot.apphot.phot(image=inlist[i],
+            iraf.digiphot.apphot.phot(image=crnm,
                                       output=inlist[i]+'.mag.1',
                                       coords=star_coo,
                                       wcsin='world',
@@ -318,6 +363,15 @@ def mos_sub(inlist, outlist, mosaic, star_coo, overwrite=True):
             iraf.imcopy(input=inlist[i]+'.mos.fits'+'[1:1731, 1:1731]',
                         output=inlist[i]+'.mos.fits')
             # ---------------------------------------------------
+            # Now scale the mosaic flux using the target galaxy
+            galRa=33.2275
+            galDec=-19.3165278
+            galRad=250
+            scaleFac = flux_scale_gal(inlist[i]+'.mos.fits', inlist[i], galRa, galDec, galRad)
+            rtmos = fits.open(inlist[i]+'.mos.fits')
+            rtmos[0].data *= scaleFac
+            write_im_head(rtmos[0].data, rtmos[0].header, inlist[i]+'.mos.fits')
+            
             # Now subtract mosaic from image
             iraf.imarith(operand1=inlist[i],
                          op='-',
@@ -396,8 +450,8 @@ if __name__ == '__main__':
         copyfile('on/vmap_on.fits', 'on_mos/vmap_on.fits')
         copyfile('off/vmap_off.fits', 'off_mos/vmap_off.fits')
         # WARNING: assumes 5 iterations, 5 half-splits in first run.
-        copyfile('on/Trial5/Flat4.fits', 'on_mos/flat.fits')
-        copyfile('off/Trial5/Flat4.fits', 'off_mos/flat.fits')
+        copyfile('on/Trial1/Flat'+str(Nloops)+'.fits', 'on_mos/flat.fits')
+        copyfile('off/Trial1/Flat'+str(Nloops)+'.fits', 'off_mos/flat.fits')
         copyfile('../ESO544_027_ha.fits', './on_mos.fits')
         copyfile('../ESO544_027_r.fits', './off_mos.fits')
         copyfile('../star.coo', './star.coo')
@@ -405,6 +459,8 @@ if __name__ == '__main__':
         os.system('/bin/cp off/M*.fits off_mos')
         os.system('/bin/cp on/tz*.fits on_mos')
         os.system('/bin/cp off/tz*.fits off_mos')
+        os.system('/bin/cp on/cr_*.fits on_mos')
+        os.system('/bin/cp off/cr_*.fits off_mos')
 
     # Clearing previous outputs
     for direc in ['on_mos/', 'off_mos/']:
@@ -415,7 +471,12 @@ if __name__ == '__main__':
         os.system('/bin/rm '+direc+skystr+'*.fits')
         os.system('/bin/rm '+direc+sstr+'*.fits')
 
-    for n in range(Nloops):
+
+    if Nloops == 0:
+        loops = Nloops +1
+    else:
+        loops = Nloops
+    for n in range(loops):
         print('Doing loop ',n+1,' of ',Nloops)
 
         # Flattening images

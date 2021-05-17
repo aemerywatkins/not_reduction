@@ -17,8 +17,8 @@ import numpy as np
 
 # Precursor stuff for later convenience
 # Making these global so importing functions works in other codes
-Nloops = 5 #Iterations
-NTrials = 5 #Half splits
+Nloops = 1 #Iterations
+NTrials = 1 #Half splits
 block = 16
 pfile = 'pvals.dat'
 fstr = 'f'
@@ -653,8 +653,13 @@ if __name__ == '__main__':
         os.system('/bin/rm -r '+direc+'Trial*')
         os.system('/bin/rm '+direc+'Flat*.fits')
         os.system('/bin/rm '+direc+'pvals*.dat')
-        os.system('/bin/rm '+direc+'stz*.fits')
-        os.system('/bin/rm '+direc+'sbn*.fits')
+        os.system('/bin/rm '+direc+sstr+fstr+'tz*.fits')
+        os.system('/bin/rm '+direc+sstr+bnstr+'tz*.fits')
+        os.system('/bin/rm '+direc+bnstr+'tz*.fits')
+        os.system('/bin/rm '+direc+pstr+fstr+'tz*.fits')
+        os.system('/bin/rm '+direc+pstr+'tz*.fits')
+        os.system('/bin/rm '+direc+'W*.fits')
+        os.system('/bin/rm '+direc+'msftz*.fits')
 
     # Half-split trials to check consistency
     for m in range(NTrials):

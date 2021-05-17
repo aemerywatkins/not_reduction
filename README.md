@@ -6,6 +6,9 @@ Dependencies:
 - PyRAF
 - `shutil` (`pip install shutils` in Python 2.7 IRAF environment)
 - NoiseChisel (carefully follow instructions listed on webpage, starting with dependencies: http://www.gnu.org/software/gnuastro/)
+- Astrometry.net (Ubuntu apt install astrometry.net and associated libraries/Python packages)
+- SWarp (can sudo install)
+- SCamp (also can sudo install, but should get latest version from Github for GAIA-EDR3 catalogue access)
 
 Steps for processing:
 
@@ -18,9 +21,13 @@ Steps for processing:
 7. Move 'vmap_on/off.fits' into their respective directories in '/Flats' and 'hmtzALDi290079.fits' into '/Flats/on'
 8. Remove bad data (ALDi270136, ALDi270137, ALDi290072, ALDi290085 & ALDi290073)
 9. Run `skyflats.py` from Flats directory
-10. From main directory, run 'mk_mosaic.py'
-11. After mosaic is made, run 'skyflats_mosaic.py' to remake flat using altered sky subtraction
-12. Run 'mk_mosaic.py' again to remake mosaic using new sky subtraction
+10. Create Gaia index files for improved astrometry using mk_gaia_indexes.py
+   - NOTE: need to move these to the proper directory, or else add command to solve-field to find them
+11. Redo WCS on object exposures using fix_wcs.py from main directory (Python 3!)
+    - Auto-creates astrometry.net config file: change install directory here if not finding application
+12. From main directory, run 'mk_mosaic.py' (Back to Python 2, PyRAF environment)
+13. After mosaic is made, run 'skyflats_mosaic.py' to remake flat using altered sky subtraction
+14. Run 'mk_mosaic.py' again to remake mosaic using new sky subtraction
 
 
 # DEFUNCT BELOW
@@ -36,8 +43,10 @@ Steps for processing:
 
 Lingering issues (in no particular order):
 
-- Test if iterating mosaic sky subtraction method improves final product at all (do by hand for now)
-- Need to test method with model galaxy to see if flux is being lost or gained using this method
-  -- Inject model into tz* frames, then run through the whole pipeline and compare output w/model parameters
+- Adjust mosaic rotation and shifting to use SWarp instead of IRAF
+- Check if background in initial mosaic is offset from zero on average
+- Model injection testing: make polynomial fit mosaic with/without models and check,
+  make new sky-sub mosaic with/without models and check as well
+- Fix the NTT pipeline too, applying new SS method to those galaxies and fixing WCS headers.
 
     
