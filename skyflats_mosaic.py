@@ -12,10 +12,10 @@ from scipy.interpolate import NearestNDInterpolator
 from scipy import ndimage
 
 
-trialdirs = glob.glob('on/Trial*')
-loopfiles = glob.glob(trialdirs[0]+'/pvals*')
-loopnums = [int(i[-5]) for i in loopfiles]
-Nloops = np.max(loopnums)
+# Default to using the full image flat directory
+loopfiles = glob.glob('on/Trial1/Flat*')
+loopnums = [int(i[-6]) for i in loopfiles]
+Nloops = np.max(loopnums) + 1
 block = 64 # MUST BE LARGE!  Change at your own risk.
 ondir = 'on_mos/'
 offdir = 'off_mos/'
@@ -420,14 +420,17 @@ def desky(flist, vmsk, block=block):
         fnm = flist[i][flist[i].find('tz') : ]
         ssub = fits.open(dirnm+substr+fnm) # Sky image
         msk = fits.getdata(dirnm+mstr+fnm) # NoiseChisel mask
-        # For erosion
-        struct = np.array([[0,0,1,0,0],
-                              [0,1,1,1,0],
-                              [1,1,1,1,1],
-                              [0,1,1,1,0],
-                              [0,0,1,0,0]])
-        # Using 10 iterations; too large of masks results in interpolation issues
-        er_msk = ndimage.binary_erosion(msk, struct, 10)
+        if ssub[0].header['OBJECT'] == 'target':
+            # For erosion, unless on sky frame; then don't erode
+            struct = np.array([[0,0,1,0,0],
+                               [0,1,1,1,0],
+                               [1,1,1,1,1],
+                               [0,1,1,1,0],
+                               [0,0,1,0,0]])
+            # Using 10 iterations; too large of masks results in interpolation issues
+            er_msk = ndimage.binary_erosion(msk, struct, 10)
+        else:
+            er_msk = msk.copy()
         ssub[0].data[er_msk==1] = -999
         ssub[0].data[vmsk==1] = -999
         bigbin = bin_and_interp(ssub, block)
@@ -449,7 +452,7 @@ if __name__ == '__main__':
         os.mkdir('off_mos')
         copyfile('on/vmap_on.fits', 'on_mos/vmap_on.fits')
         copyfile('off/vmap_off.fits', 'off_mos/vmap_off.fits')
-        # WARNING: assumes 5 iterations, 5 half-splits in first run.
+        # Uses last iteration of flats for full-image trial
         copyfile('on/Trial1/Flat'+str(Nloops)+'.fits', 'on_mos/flat.fits')
         copyfile('off/Trial1/Flat'+str(Nloops)+'.fits', 'off_mos/flat.fits')
         copyfile('../ESO544_027_ha.fits', './on_mos.fits')
@@ -470,13 +473,10 @@ if __name__ == '__main__':
         os.system('/bin/rm '+direc+substr+'*.fits')
         os.system('/bin/rm '+direc+skystr+'*.fits')
         os.system('/bin/rm '+direc+sstr+'*.fits')
+        os.system('/bin/rm '+direc+'cr_*.fits')
 
 
-    if Nloops == 0:
-        loops = Nloops +1
-    else:
-        loops = Nloops
-    for n in range(loops):
+    for n in range(Nloops):
         print('Doing loop ',n+1,' of ',Nloops)
 
         # Flattening images

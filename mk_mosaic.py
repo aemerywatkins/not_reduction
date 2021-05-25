@@ -28,14 +28,11 @@ star = 'star.coo'
 region = 'ellphot.reg'
 onmos = 'ESO544_027_ha.fits'
 offmos = 'ESO544_027_r.fits'
-## Auto-generate from Flats directory
-trialdirs = glob.glob('Flats/on/Trial*')
-#trialnums = [int(i[-1]) for i in trialdirs]
-#Ntrial = np.max(trialnums)
+# Use only full-image Trial
 Ntrial = 1
-# Also auto-generate
-loopfiles = glob.glob(trialdirs[0]+'/pvals*')
-loopnums = [int(i[-5]) for i in loopfiles]
+# Auto-generates
+loopfiles = glob.glob('Flats/on/Trial1/Flat*')
+loopnums = [int(i[-6]) for i in loopfiles]
 Nloops = np.max(loopnums)
 fstr = 'f'
 onfiles = np.array(glob.glob('Flats/on/tz*.fits'))
@@ -112,7 +109,7 @@ def skysub_legendre(dire, Ntrial, Nloops, degree=2, overwrite=True):
     Requires:
       -- Directory name to work in (e.g., 'on' while making flats)
       -- Final trial number, to descend in proper flats directory (see skyflats.py)
-      -- Final loop number (see skyflats.py)
+      -- Desired loop number (see skyflats.py)
       -- Degree of polynomial fit used to make the parameter file pvals*.dat
     Return:
       -- Nothing, but write sky subtracted images to the disk
@@ -482,6 +479,9 @@ if __name__ == '__main__':
         # Making cosmic ray masks for next step
         print('Doing cosmic ray rejection...')
         os.system('/home/aew/anaconda3/bin/python3 clean_cr.py sf 0')
+
+    else:
+        print('Using mosaic-subtracted sky models....')
         
     # Creates list of object exposures in each directory
     print(ondir)
@@ -518,10 +518,10 @@ if __name__ == '__main__':
     os.system('/home/aew/anaconda3/bin/python3 clean_cr.py msf 1')
         
     print('Registering images to reference....')
-    #register(ondir, tlis, 'msf', refim)
-    #register(offdir, tlis, 'msf', refim)
-    register_swarp(ondir, tlis, 'msf', refim)
-    register_swarp(offdir, tlis, 'msf', refim)
+    register(ondir, tlis, 'msf', refim)
+    register(offdir, tlis, 'msf', refim)
+    #register_swarp(ondir, tlis, 'msf', refim)
+    #register_swarp(offdir, tlis, 'msf', refim)
 
     print('Moving registered images to new '+mosdir+' directory')
     if not os.path.isdir(mosdir):
@@ -556,12 +556,4 @@ if __name__ == '__main__':
 
     print('Wrote '+onmos+' & '+offmos)
 
-    print('Adjusting mosaic WCS info...')
-    # Detection w/SExtractor, run Scamp to produce header, then run
-    # SWarp, stacking mosaic with refimage.
-    # ACK!  Not consistent from run to run.  Maybe skip.
-    #fix_mos_header(onmos)
-    #fix_mos_header(offmos)
-    # NOTE: probably still do a manual pixel shift to get these aligned
-    # if desired, but for first run they only need match for alignment
-    # with the input images.
+

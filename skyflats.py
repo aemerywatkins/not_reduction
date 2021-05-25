@@ -17,8 +17,8 @@ import numpy as np
 
 # Precursor stuff for later convenience
 # Making these global so importing functions works in other codes
-Nloops = 2 #Iterations
-NTrials = 1 #Half splits
+Nloops = 5 #Iterations
+NTrials = 2 #Half splits
 block = 16
 pfile = 'pvals.dat'
 fstr = 'f'
