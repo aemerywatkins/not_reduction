@@ -30,25 +30,6 @@ def write_im_head(imarr, head, fname):
     hdu = fits.PrimaryHDU(imarr, header=head)
     hdulist = fits.HDUList([hdu])
     hdulist.writeto(fname, overwrite=True)
-
-
-if not os.path.exists('WCS'):
-    os.mkdir('WCS')
-    os.mkdir('WCS/on')
-    os.mkdir('WCS/off')
-    # Just in case, keep Flats directory as backups for this
-    # Replace later with w*.fits files, when successful
-    os.system('/bin/cp Flats/on/ftz*.fits WCS/on')
-    os.system('/bin/cp Flats/off/ftz*.fits WCS/off')
-    # Grabbing SEXtractor parameters from Github repo
-    os.system('/bin/cp not_reduction/default.* .')
-    os.system('/bin/cp not_reduction/gauss_3.0_7x7.conv .')
-    cfgFile = open('WCS/astrometry.cfg', 'w')
-    cfgFile.write('inparallel \n'
-                  +'cpulimit 300\n'
-                  +'add_path /usr/share/astrometry/\n' # CHANGE THIS IF NEEDED!
-                  +'autoindex\n')
-    cfgFile.close()
     
 
 def do_band(band):
@@ -79,19 +60,38 @@ def do_band(band):
         os.system('solve-field '+prev+band+'/c'+im[start:]
                   +' --config /home/aew/Science/NOTHalpha/WCS/astrometry.cfg ' 
                   +'--scale-units arcsecperpix --scale-low 0.15 --scale-high 0.25 '
-                  +'--odds-to-solve 1e8 --no-plots --no-verify --overwrite '
+                  +'--odds-to-solve 1e15 --no-plots --no-verify --overwrite '
                   +'--axy tmp.axy  --use-sextractor '
-                  +'--sextractor-path /usr/bin/source-extractor '
+                  +'-T --sigma 200 --nsigma 8 '
+                  +'--sextractor-path "/usr/bin/source-extractor -c /home/aew/Science/NOTHalpha/default.sex" '
                   +'--new-fits '+prev+band+'/w'+im[start:])
         
 
 if __name__ == '__main__':
     if not os.path.exists('WCS'):
+        os.mkdir('WCS')
+        os.mkdir('WCS/on')
+        os.mkdir('WCS/off')
+        # Just in case, keep Flats directory as backups for this
+        # Replace later with w*.fits files, when successful
+        os.system('/bin/cp Flats/on/ftz*.fits WCS/on')
+        os.system('/bin/cp Flats/off/ftz*.fits WCS/off')
+        # Grabbing SEXtractor parameters from Github repo
+        os.system('/bin/cp not_reduction/default.* .')
+        os.system('/bin/cp not_reduction/gauss_3.0_7x7.conv .')
+        cfgFile = open('WCS/astrometry.cfg', 'w')
+        cfgFile.write('inparallel \n'
+                      +'cpulimit 300\n'
+                      +'add_path /usr/share/astrometry/\n' # CHANGE THIS IF NEEDED!
+                      +'autoindex\n')
+        cfgFile.close()
+    
         print('Doing on-band images...')
         do_band('on')
         print('Doing off-band images...')
         do_band('off')
         print('Done!')
+        
     else:
         print('Using previous WCS solutions.  Delete directory to redo.')
     
@@ -119,3 +119,4 @@ if __name__ == '__main__':
 #Please cite the original paper which can be found at: http://www.astro.yale.edu/dokkum/lacosmic/
 #van Dokkum 2001, PASP, 113, 789, 1420 (article : http://adsabs.harvard.edu/abs/2001PASP..113.1420V)
 
+# Fails on on/ftzALDi270123.fits.  Works w/lower threshold (1e8).
