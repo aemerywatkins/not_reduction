@@ -453,8 +453,8 @@ if __name__ == '__main__':
         copyfile('on/vmap_on.fits', 'on_mos/vmap_on.fits')
         copyfile('off/vmap_off.fits', 'off_mos/vmap_off.fits')
         # Uses last iteration of flats for full-image trial
-        copyfile('on/Trial1/Flat'+str(Nloops)+'.fits', 'on_mos/flat.fits')
-        copyfile('off/Trial1/Flat'+str(Nloops)+'.fits', 'off_mos/flat.fits')
+        copyfile('on/Trial1/Flat'+str(Nloops-1)+'.fits', 'on_mos/flat.fits')
+        copyfile('off/Trial1/Flat'+str(Nloops-1)+'.fits', 'off_mos/flat.fits')
         copyfile('../ESO544_027_ha.fits', './on_mos.fits')
         copyfile('../ESO544_027_r.fits', './off_mos.fits')
         copyfile('../star.coo', './star.coo')
@@ -473,8 +473,6 @@ if __name__ == '__main__':
         os.system('/bin/rm '+direc+substr+'*.fits')
         os.system('/bin/rm '+direc+skystr+'*.fits')
         os.system('/bin/rm '+direc+sstr+'*.fits')
-        os.system('/bin/rm '+direc+'cr_*.fits')
-
 
     for n in range(Nloops):
         print('Doing loop ',n+1,' of ',Nloops)
